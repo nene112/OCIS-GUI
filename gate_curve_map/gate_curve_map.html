@@ -1,0 +1,3453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>闸门曲线地图</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@9.2.4/ol.css" />
+  <style>
+    :root {
+      --bg: #eef4f7;
+      --panel: rgba(255, 255, 255, 0.92);
+      --line: #cfd8df;
+      --text: #163042;
+      --muted: #587082;
+      --gate: #14532d;
+      --chart: #0f766e;
+      --chart-fill: rgba(15, 118, 110, 0.12);
+      --waterline-h: 268px;
+      --waterline-visible-h: var(--waterline-h);
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #f8fbfd, var(--bg));
+      color: var(--text);
+      overflow: hidden;
+      user-select: none;
+      overscroll-behavior: none;
+    }
+    * {
+      -webkit-user-drag: none;
+    }
+    input, textarea {
+      user-select: text;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      height: 100vh;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(248, 251, 253, 0.96);
+      padding: 18px 16px;
+      overflow: auto;
+      scrollbar-gutter: stable;
+    }
+    .sidebar h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+    .sidebar p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .field {
+      margin: 12px 0;
+    }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      background: #fff;
+      color: var(--text);
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      border: 1px solid #0f766e;
+      border-radius: 999px;
+      background: #0f766e;
+      color: #fff;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #fff;
+      color: #0f766e;
+    }
+    .stats {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .map-wrap {
+      min-width: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 8px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    .map-section {
+      position: relative;
+      min-height: 0;
+      flex: 0 0 50%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #f8fbfd;
+    }
+    .layout-splitter {
+      position: relative;
+      flex: 0 0 10px;
+      cursor: row-resize;
+      touch-action: none;
+    }
+    .layout-splitter::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      transform: translateY(-50%);
+      background: rgba(100, 116, 139, 0.45);
+    }
+    .layout-splitter:hover::before,
+    .layout-splitter.dragging::before {
+      background: rgba(15, 118, 110, 0.85);
+    }
+    .charts-section {
+      min-width: 0;
+      min-height: 0;
+      flex: 0 0 50%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.9);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      overflow: hidden;
+    }
+    .chart-pane {
+      min-width: 0;
+      min-height: 0;
+      padding: 10px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;
+    }
+    .chart-pane + .chart-pane {
+      border-left: 1px solid var(--line);
+    }
+    .chart-pane h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 6px 2px;
+    }
+    .pane-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 4px 2px;
+      margin-bottom: 2px;
+    }
+    .pane-head h3 {
+      margin: 0;
+      padding: 0;
+      position: static;
+      background: transparent;
+      white-space: nowrap;
+    }
+    .pane-head-meta {
+      font-size: 11px;
+      color: #64748b;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
+    }
+    .pane-head-btn {
+      border: 1px solid rgba(14, 116, 144, 0.45);
+      background: rgba(255, 255, 255, 0.95);
+      color: #0e7490;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 2px 10px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .pane-head-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .segment-info-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.3);
+      z-index: 1000;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    .segment-info-modal.show {
+      display: flex;
+    }
+    .segment-info-panel {
+      width: min(920px, 95vw);
+      max-height: 86vh;
+      overflow: hidden;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+      display: flex;
+      flex-direction: column;
+    }
+    .segment-info-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(248, 250, 252, 0.95);
+    }
+    .segment-info-head h3 {
+      margin: 0;
+      font-size: 14px;
+      color: #0f172a;
+    }
+    .segment-info-close {
+      border: 1px solid rgba(100, 116, 139, 0.45);
+      border-radius: 999px;
+      background: #fff;
+      color: #334155;
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 2px 10px;
+      cursor: pointer;
+    }
+    .segment-info-body {
+      padding: 10px 14px 14px;
+      overflow: auto;
+      font-size: 12px;
+      color: #1e293b;
+    }
+    .segment-info-kv {
+      margin: 0 0 8px;
+      line-height: 1.5;
+      color: #334155;
+    }
+    .segment-info-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 6px 0 12px;
+      font-size: 12px;
+    }
+    .segment-info-table th,
+    .segment-info-table td {
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 4px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .segment-info-table th {
+      background: rgba(241, 245, 249, 0.9);
+      color: #334155;
+      font-weight: 600;
+    }
+    #gatePane {
+      scroll-padding-top: 58px;
+    }
+    .chart-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-bottom: 16px;
+    }
+    .chart-list.fill-cards {
+      display: grid;
+      height: 100%;
+      padding-bottom: 0;
+      grid-auto-rows: minmax(0, 1fr);
+    }
+    .chart-empty {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 6px 2px;
+    }
+    .detail-chart-card {
+      border: 1px solid rgba(15, 118, 110, 0.2);
+      border-radius: 10px;
+      background: #fff;
+      padding: 2px 10px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+      scroll-margin-top: 58px;
+      min-height: 218px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .detail-chart-card.gate-active {
+      border-color: rgba(220, 38, 38, 0.55);
+      box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18), 0 2px 10px rgba(15, 23, 42, 0.08);
+    }
+    .detail-chart-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin: 0 0 6px;
+      color: var(--text);
+    }
+    .detail-chart-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 2px;
+    }
+    .detail-chart-head .detail-chart-title {
+      margin: 0;
+      white-space: nowrap;
+    }
+    .detail-chart-title-meta {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+      min-width: 0;
+      flex: 1;
+    }
+    .detail-chart-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .flow-breakdown {
+      margin-top: 6px;
+      border: 1px solid rgba(15, 118, 110, 0.2);
+      border-radius: 8px;
+      background: rgba(248, 251, 253, 0.85);
+      overflow: hidden;
+    }
+    .flow-breakdown summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #0f766e;
+      user-select: none;
+    }
+    .flow-breakdown summary::-webkit-details-marker {
+      display: none;
+    }
+    .flow-breakdown-content {
+      padding: 0 8px 8px;
+    }
+    .flow-breakdown-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      color: #334155;
+    }
+    .flow-breakdown-table th,
+    .flow-breakdown-table td {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+      padding: 4px 2px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .flow-breakdown-table th:last-child,
+    .flow-breakdown-table td:last-child {
+      text-align: right;
+    }
+    .flow-breakdown-empty {
+      font-size: 11px;
+      color: #64748b;
+      padding: 2px 0;
+    }
+    .detail-chart-svg {
+      display: block;
+      width: 100%;
+      height: 150px;
+      overflow: visible;
+    }
+    .detail-chart-plot {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 180px;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    .legend {
+      position: absolute;
+      left: 14px;
+      bottom: calc(var(--waterline-visible-h) + 14px);
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      font-size: 12px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+    }
+    .legend strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .legend-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--gate);
+      box-shadow: 0 0 0 2px rgba(20, 83, 45, 0.18);
+    }
+    .legend-channel {
+      width: 24px;
+      height: 3px;
+      background: linear-gradient(90deg, #3b82f6, #f59e0b, #ef4444);
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .legend-spark {
+      width: 24px;
+      height: 10px;
+      border-bottom: 2px solid var(--chart);
+      border-left: 2px solid transparent;
+      transform: skewX(-24deg);
+      opacity: 0.9;
+    }
+    @media (max-width: 1120px) {
+      .app {
+        grid-template-columns: 280px 1fr;
+      }
+      .charts-section {
+        grid-template-columns: 1fr;
+      }
+      .chart-pane + .chart-pane {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+    }
+    @media (max-width: 860px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        max-height: 36vh;
+      }
+      .map-wrap {
+        height: 64vh;
+      }
+    }
+    .ol-tooltip {
+      font-size: 12px;
+    }
+    .waterline-panel {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: var(--waterline-visible-h);
+      padding: 6px 10px 8px;
+      box-sizing: border-box;
+      background: rgba(255, 255, 255, 0);
+      border-top: 1px solid rgba(148, 163, 184, 0.35);
+      backdrop-filter: blur(1px);
+      z-index: 5;
+      transition: height 0.2s ease;
+      overflow: hidden;
+    }
+    .waterline-head {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      margin-bottom: 4px;
+      min-height: 20px;
+      z-index: 3;
+    }
+    .waterline-title {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0f172a;
+      pointer-events: auto;
+      white-space: nowrap;
+    }
+    .waterline-meta {
+      font-size: 11px;
+      color: #475569;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 48%;
+    }
+    .waterline-inline-legend {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 10px;
+      color: #64748b;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .waterline-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .waterline-legend-line {
+      width: 16px;
+      height: 0;
+      border-top: 2px solid #0f766e;
+    }
+    .waterline-legend-line.bed {
+      border-top-color: rgba(120,72,32,0.95);
+    }
+    .waterline-legend-line.flow-gate {
+      border-top-color: #2563eb;
+      border-top-style: dashed;
+    }
+    .waterline-legend-line.flow-diversion {
+      border-top-color: #f97316;
+      border-top-style: solid;
+    }
+    .waterline-actions {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+      z-index: 4;
+    }
+    .waterline-toggle {
+      border: 1px solid rgba(15, 118, 110, 0.45);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #0f766e;
+      padding: 2px 10px;
+      font-size: 11px;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+    .waterline-reset {
+      border-color: rgba(15, 118, 110, 0.35);
+      color: #0f766e;
+      background: rgba(255,255,255,0.9);
+      padding: 2px 8px;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .waterline-panel.collapsed .waterline-plot {
+      display: none;
+    }
+    .waterline-plot {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: calc(100% - 22px);
+      background: transparent;
+    }
+    #waterlinePlot .modebar {
+      top: -22px !important;
+      right: 228px !important;
+      background: rgba(255, 255, 255, 0.86) !important;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 118, 110, 0.25);
+      padding: 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <h1>闸门曲线地图</h1>
+      <p>使用 OpenLayers 绘制闸门矢量点。地图默认显示颜色与名称，点击闸门后在下方展示关联图表。</p>
+      <div class="field">
+        <label for="rootPath">案例根目录</label>
+        <input id="rootPath" value="../data/sj_zonggan-d0" />
+      </div>
+      <div class="field">
+        <label for="inputPath">渠道节点 input.txt</label>
+        <input id="inputPath" value="mesh/input.txt" />
+      </div>
+      <div class="field">
+        <label for="neighborPath">邻接关系 neighborId.txt</label>
+        <input id="neighborPath" value="mesh/neighborId.txt" />
+      </div>
+      <div class="field">
+        <label for="gatesPath">闸门位置 CSV</label>
+        <input id="gatesPath" value="mesh/gates_mesh.csv" />
+      </div>
+      <div class="field">
+        <label for="seriesPath">闸前水位 CSV(H1)</label>
+        <input id="seriesPath" value="output/channel_Gates_Stastic_h1.csv" />
+      </div>
+      <div class="field">
+        <label for="stageObsPath">实测水位 CSV(默认 stage_obs_24_td.csv)</label>
+        <input id="stageObsPath" value="input/stage_obs_24_td.csv" />
+      </div>
+      <div class="field">
+        <label for="flowPath">闸门流量 CSV(Q)</label>
+        <input id="flowPath" value="output/channel_Gates_Stastic.csv" />
+      </div>
+      <div class="field">
+        <label for="obsPath">实测流量 CSV(默认 action_obs.csv)</label>
+        <input id="obsPath" value="input/action_obs.csv" />
+      </div>
+      <div class="field">
+        <label for="edgesPath">边关系 CSV</label>
+        <input id="edgesPath" value="mesh/edges.csv" />
+      </div>
+      <div class="actions">
+        <button id="reloadBtn">重新加载</button>
+        <button id="fitBtn" class="secondary">缩放到全图</button>
+      </div>
+      <div id="stats" class="stats">等待加载...</div>
+    </aside>
+    <main class="map-wrap">
+      <section class="map-section">
+        <div id="map"></div>
+        <div class="legend">
+          <strong>图例</strong>
+          <div class="legend-line"><span class="legend-channel"></span><span>渠道线（不同颜色=edges.csv 不同渠段）</span></div>
+          <div class="legend-line"><span class="legend-dot"></span><span>闸门位置矢量点与名称</span></div>
+          <div class="legend-line"><span class="legend-spark"></span><span>点击闸门后在下方显示图表</span></div>
+        </div>
+        <div id="channelLegend" style="position:absolute;right:14px;top:14px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);font-size:11px;max-height:60vh;overflow-y:auto;backdrop-filter:blur(10px);box-shadow:0 8px 24px rgba(31,41,55,0.08);display:none;"><strong style="display:block;margin-bottom:6px;">渠段图例（edges）</strong><div id="channelLegendItems"></div></div>
+        <div class="waterline-panel" id="waterlinePanel">
+          <div class="waterline-head">
+            <p class="waterline-title">动态水面线</p>
+            <span id="waterlineMeta" class="waterline-meta"></span>
+            <div class="waterline-inline-legend" aria-hidden="true">
+              <span class="waterline-legend-item"><span class="waterline-legend-line"></span><span>水面高程</span></span>
+              <span class="waterline-legend-item"><span class="waterline-legend-line bed"></span><span>渠底高程</span></span>
+              <span class="waterline-legend-item"><span class="waterline-legend-line flow-gate"></span><span>节制闸流量(type=0/4)</span></span>
+              <span class="waterline-legend-item"><span class="waterline-legend-line flow-diversion"></span><span>渠段分水和(type=2/6)</span></span>
+            </div>
+            <div class="waterline-actions">
+              <button type="button" id="waterlineModeBtn" class="waterline-toggle">离散点模式</button>
+              <button type="button" id="waterlinePlayBtn" class="waterline-toggle">播放</button>
+              <button type="button" id="waterlinePauseBtn" class="waterline-toggle">暂停</button>
+              <button type="button" id="waterlineResetBtn" class="waterline-toggle waterline-reset">重置视角</button>
+              <button type="button" id="waterlineToggleBtn" class="waterline-toggle">折叠</button>
+            </div>
+          </div>
+          <div id="waterlinePlot" class="waterline-plot"></div>
+        </div>
+      </section>
+      <div id="layoutSplitter" class="layout-splitter" title="拖动调整GIS与图表高度" aria-label="拖动调整GIS与图表高度"></div>
+      <section class="charts-section">
+        <section class="chart-pane" id="channelPane">
+          <div class="pane-head">
+            <h3>渠段图表</h3>
+            <span id="channelPaneMeta" class="pane-head-meta"></span>
+          </div>
+          <div class="chart-list" id="channelChartList"></div>
+        </section>
+        <section class="chart-pane" id="gatePane">
+          <div class="pane-head">
+            <h3>闸门图表</h3>
+            <span id="gatePaneMeta" class="pane-head-meta"></span>
+            <button type="button" id="gateSegmentInfoBtn" class="pane-head-btn" disabled>渠段信息</button>
+          </div>
+          <div class="chart-list" id="gateChartList"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="segmentInfoModal" class="segment-info-modal" aria-hidden="true">
+    <div class="segment-info-panel" role="dialog" aria-modal="true" aria-labelledby="segmentInfoTitle">
+      <div class="segment-info-head">
+        <h3 id="segmentInfoTitle">当前渠段信息</h3>
+        <button type="button" id="segmentInfoCloseBtn" class="segment-info-close" aria-label="关闭">关闭</button>
+      </div>
+      <div id="segmentInfoBody" class="segment-info-body"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ol@9.2.4/dist/ol.js"></script>
+  <script src="../vendor/plotly-2.35.2.min.js"></script>
+  <script>
+    const projection = new ol.proj.Projection({
+      code: 'LOCAL_GATE_MESH',
+      units: 'm'
+    });
+
+    // 渠道线颜色表（26色，视觉上有足够区分度）
+    const CHANNEL_PALETTE = [
+      '#3b82f6','#f59e0b','#ef4444','#10b981','#8b5cf6',
+      '#f97316','#06b6d4','#ec4899','#84cc16','#6366f1',
+      '#14b8a6','#f43f5e','#a855f7','#22c55e','#eab308',
+      '#0ea5e9','#d946ef','#64748b','#fb923c','#4ade80',
+      '#e879f9','#38bdf8','#fde047','#f87171','#a3e635','#7dd3fc'
+    ];
+
+    const channelSource = new ol.source.Vector();
+    const channelLayer = new ol.layer.Vector({
+      source: channelSource,
+      style: function(feature) {
+        const isSelected = selectedChannelLabel && selectedChannelLabel === String(feature.get('segmentLabel') || '');
+        return new ol.style.Style({
+          stroke: new ol.style.Stroke({
+            color: feature.get('color') || '#94a3b8',
+            width: isSelected ? 4 : 2
+          })
+        });
+      }
+    });
+
+    const gateSource = new ol.source.Vector();
+    const gateLayer = new ol.layer.Vector({
+      source: gateSource,
+      style: function(feature) {
+        const name = String(feature.get('name') || '');
+        const isSelected = selectedGateName && selectedGateName === name;
+        return new ol.style.Style({
+          zIndex: isSelected ? 20 : 10,
+          image: new ol.style.Circle({
+            radius: isSelected ? 7 : 5,
+            fill: new ol.style.Fill({ color: isSelected ? '#dc2626' : '#14532d' }),
+            stroke: new ol.style.Stroke({ color: isSelected ? 'rgba(220, 38, 38, 0.26)' : 'rgba(20, 83, 45, 0.22)', width: isSelected ? 7 : 5 })
+          }),
+          text: new ol.style.Text({
+            text: name,
+            offsetY: -14,
+            font: (isSelected ? '700 12px' : '12px') + ' Microsoft YaHei, sans-serif',
+            fill: new ol.style.Fill({ color: isSelected ? '#7f1d1d' : '#163042' }),
+            backgroundFill: new ol.style.Fill({ color: isSelected ? 'rgba(254, 226, 226, 0.9)' : 'rgba(255,255,255,0.82)' }),
+            padding: [2, 4, 2, 4]
+          })
+        });
+      }
+    });
+
+    const map = new ol.Map({
+      target: 'map',
+      layers: [
+        channelLayer,
+        gateLayer
+      ],
+      view: new ol.View({
+        projection,
+        center: [0, 0],
+        zoom: 2,
+        multiWorld: false,
+        showFullExtent: true
+      }),
+      controls: ol.control.defaults.defaults({ attribution: false })
+    });
+
+    let currentGateRows = [];
+    let currentStageMap = { timeline: [], byName: new Map() };
+    let currentStageH2Map = { timeline: [], byName: new Map(), seriesHeaders: [] };
+    let currentStageObsMap = { timeline: [], byName: new Map(), seriesHeaders: [] };
+    let currentStageObsAlignedByStage = new Map();
+    let currentStageObsCanonical = new Map();
+    let currentFlowMap = { timeline: [], byName: new Map() };
+    let currentInternalFlowMap = { timeline: [], byName: new Map(), seriesHeaders: [] };
+    let currentFlowCanonical = new Map();
+    let currentInternalFlowCanonical = new Map();
+    let currentObsMap = { timeline: [], byName: new Map() };
+    let currentObsAlignedByFlow = new Map();
+    let currentObsCanonical = new Map();
+    let currentGatesIniNameSet = new Set();
+    let currentEdges = [];
+    let currentGateTypeByName = new Map();
+    let gateByName = new Map();
+    let selectedGateName = '';
+    let selectedChannelLabel = '';
+
+    const inputPathEl = document.getElementById('inputPath');
+    const neighborPathEl = document.getElementById('neighborPath');
+    const gatesPathEl = document.getElementById('gatesPath');
+    const seriesPathEl = document.getElementById('seriesPath');
+    const stageObsPathEl = document.getElementById('stageObsPath');
+    const flowPathEl = document.getElementById('flowPath');
+    const obsPathEl = document.getElementById('obsPath');
+    const edgesPathEl = document.getElementById('edgesPath');
+    const rootPathEl = document.getElementById('rootPath');
+    const statsEl = document.getElementById('stats');
+    const channelLegendEl = document.getElementById('channelLegend');
+    const channelLegendItemsEl = document.getElementById('channelLegendItems');
+    const channelChartListEl = document.getElementById('channelChartList');
+    const channelPaneMetaEl = document.getElementById('channelPaneMeta');
+    const gateChartListEl = document.getElementById('gateChartList');
+    const gatePaneMetaEl = document.getElementById('gatePaneMeta');
+    const gateSegmentInfoBtnEl = document.getElementById('gateSegmentInfoBtn');
+    const segmentInfoModalEl = document.getElementById('segmentInfoModal');
+    const segmentInfoBodyEl = document.getElementById('segmentInfoBody');
+    const segmentInfoCloseBtnEl = document.getElementById('segmentInfoCloseBtn');
+    const waterlinePanelEl = document.getElementById('waterlinePanel');
+    const waterlineModeBtnEl = document.getElementById('waterlineModeBtn');
+    const waterlineToggleBtnEl = document.getElementById('waterlineToggleBtn');
+    const waterlinePlayBtnEl = document.getElementById('waterlinePlayBtn');
+    const waterlinePauseBtnEl = document.getElementById('waterlinePauseBtn');
+    const waterlineResetBtnEl = document.getElementById('waterlineResetBtn');
+    const waterlineMetaEl = document.getElementById('waterlineMeta');
+    const waterlinePlotEl = document.getElementById('waterlinePlot');
+    const mapWrapEl = document.querySelector('.map-wrap');
+    const mapSectionEl = document.querySelector('.map-section');
+    const chartsSectionEl = document.querySelector('.charts-section');
+    const layoutSplitterEl = document.getElementById('layoutSplitter');
+    let pendingPlotlyCharts = [];
+    let plotlyChartSeq = 0;
+    let waterlineCollapsed = false;
+    let waterlineMode = 'gate';
+    let currentWaterlineView = null;
+    let currentStakeMap = {};
+    let mapSectionRatio = 0.5;
+
+    function resizeWaterlinePlot() {
+      if (!waterlineCollapsed && waterlinePlotEl && window.Plotly) {
+        try {
+          Plotly.Plots.resize(waterlinePlotEl);
+        } catch (_) {}
+      }
+    }
+
+    function setVerticalSplit(mapHeightPx) {
+      if (!mapWrapEl || !mapSectionEl || !chartsSectionEl || !layoutSplitterEl) return;
+      const wrapRect = mapWrapEl.getBoundingClientRect();
+      const splitterHeight = layoutSplitterEl.offsetHeight || 10;
+      const available = wrapRect.height - splitterHeight;
+      if (!(available > 0)) return;
+
+      const minPanePx = 140;
+      const clamped = Math.max(minPanePx, Math.min(available - minPanePx, mapHeightPx));
+      mapSectionRatio = clamped / available;
+
+      mapSectionEl.style.flexBasis = clamped + 'px';
+      chartsSectionEl.style.flexBasis = (available - clamped) + 'px';
+      requestAnimationFrame(resizeWaterlinePlot);
+    }
+
+    function applySplitRatio() {
+      if (!mapWrapEl || !layoutSplitterEl) return;
+      const wrapRect = mapWrapEl.getBoundingClientRect();
+      const splitterHeight = layoutSplitterEl.offsetHeight || 10;
+      const available = wrapRect.height - splitterHeight;
+      if (!(available > 0)) return;
+      setVerticalSplit(available * mapSectionRatio);
+    }
+
+    function initLayoutSplitter() {
+      if (!layoutSplitterEl || !mapWrapEl) return;
+
+      const onPointerMove = (event) => {
+        if (!layoutSplitterEl.classList.contains('dragging')) return;
+        const wrapRect = mapWrapEl.getBoundingClientRect();
+        setVerticalSplit(event.clientY - wrapRect.top);
+      };
+      const onPointerUp = () => {
+        if (!layoutSplitterEl.classList.contains('dragging')) return;
+        layoutSplitterEl.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
+
+      layoutSplitterEl.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        layoutSplitterEl.classList.add('dragging');
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+        try {
+          layoutSplitterEl.setPointerCapture(event.pointerId);
+        } catch (_) {}
+      });
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('resize', () => {
+        applySplitRatio();
+      });
+
+      applySplitRatio();
+    }
+
+    function setWaterlineCollapsed(collapsed) {
+      waterlineCollapsed = !!collapsed;
+      if (!waterlinePanelEl || !waterlineToggleBtnEl) return;
+      waterlinePanelEl.classList.toggle('collapsed', waterlineCollapsed);
+      document.documentElement.style.setProperty('--waterline-visible-h', waterlineCollapsed ? '32px' : '268px');
+      waterlineToggleBtnEl.textContent = waterlineCollapsed ? '展开' : '折叠';
+      if (waterlineModeBtnEl) waterlineModeBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
+      if (waterlinePlayBtnEl) waterlinePlayBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
+      if (waterlinePauseBtnEl) waterlinePauseBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
+      if (waterlineResetBtnEl) waterlineResetBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
+      setTimeout(resizeWaterlinePlot, 220);
+    }
+
+    function setWaterlineMeta(canal, stepIndex, stepLabel) {
+      if (!waterlineMetaEl) return;
+      const safeCanal = String(canal || '-');
+      const safeStep = Number.isFinite(stepIndex) ? stepIndex : '-';
+      const safeLabel = String(stepLabel || '-');
+      waterlineMetaEl.textContent = '渠段: ' + safeCanal + ' | 时间步: ' + safeStep + ' (' + safeLabel + ')';
+    }
+
+    function resetWaterlineView() {
+      if (!waterlinePlotEl || !window.Plotly || !currentWaterlineView) return;
+      const nextLayout = {
+        'xaxis.range': currentWaterlineView.xRange,
+        'yaxis.range': currentWaterlineView.yRange
+      };
+      Plotly.relayout(waterlinePlotEl, nextLayout);
+    }
+
+    function playWaterline() {
+      if (!waterlinePlotEl || !window.Plotly) return;
+      Plotly.animate(waterlinePlotEl, null, {
+        fromcurrent: true,
+        frame: { duration: 220, redraw: true },
+        transition: { duration: 0 }
+      });
+    }
+
+    function pauseWaterline() {
+      if (!waterlinePlotEl || !window.Plotly) return;
+      Plotly.animate(waterlinePlotEl, [null], {
+        mode: 'immediate',
+        frame: { duration: 0, redraw: false },
+        transition: { duration: 0 }
+      });
+    }
+
+    function getStageSeriesByName(stageMap, name) {
+      const byName = stageMap && stageMap.byName instanceof Map ? stageMap.byName : new Map();
+      const key = normalizeHeader(name);
+      const direct = byName.get(key);
+      if (direct && direct.length) return direct;
+      const canon = canonicalName(key);
+      if (!canon) return [];
+      let found = [];
+      byName.forEach((values, rawName) => {
+        if (found.length) return;
+        if (canonicalName(rawName) === canon && Array.isArray(values) && values.length) found = values;
+      });
+      return found;
+    }
+
+    function buildStakeCanalSeries(stageMap, gates, stakeMap) {
+      const gateById = new Map();
+      (Array.isArray(gates) ? gates : []).forEach((gate) => {
+        const rawId = gate ? gate.id : '';
+        const id = String(rawId === undefined || rawId === null ? '' : rawId).trim();
+        if (!id) return;
+        gateById.set(id, gate);
+      });
+
+      const src = stakeMap && typeof stakeMap === 'object' ? stakeMap : {};
+      const canalNames = Object.keys(src).filter((name) => String(name || '').trim());
+      const canals = [];
+
+      canalNames.forEach((canalName) => {
+        const pointsRaw = src[canalName];
+        if (!pointsRaw || typeof pointsRaw !== 'object') return;
+        const points = Object.keys(pointsRaw).map((stakeKey) => {
+          const stake = Number(stakeKey);
+          const rawNodeId = pointsRaw[stakeKey];
+          const nodeId = String(rawNodeId === undefined || rawNodeId === null ? '' : rawNodeId).trim();
+          return { stake, nodeId };
+        }).filter((p) => Number.isFinite(p.stake) && p.nodeId)
+          .sort((a, b) => a.stake - b.stake);
+
+        const x = [];
+        const nodeNames = [];
+        const labels = [];
+        const zList = [];
+        const seriesList = [];
+        points.forEach((p) => {
+          const gate = gateById.get(p.nodeId);
+          if (!gate) return;
+          const name = String(gate.name || '').trim();
+          if (!name) return;
+          const stageSeries = getStageSeriesByName(stageMap, name);
+          if (!Array.isArray(stageSeries) || !stageSeries.length) return;
+          x.push(p.stake);
+          nodeNames.push(name);
+          labels.push(name + ' (' + p.stake + ')');
+          zList.push(Number(gate.z));
+          seriesList.push(stageSeries);
+        });
+
+        if (x.length >= 2) canals.push({ canalName, x, nodeNames, labels, zList, seriesList });
+      });
+
+      return canals;
+    }
+
+    function renderDynamicWaterlineStakeMode(stageMap, edges, gates, flowMap, stakeMap) {
+      if (!waterlinePlotEl || !window.Plotly) return;
+      const timeline = Array.isArray(stageMap && stageMap.timeline) ? stageMap.timeline : [];
+      if (!timeline.length) {
+        Plotly.purge(waterlinePlotEl);
+        waterlinePlotEl.innerHTML = '<div class="chart-empty">离散点模式无可用水位数据。</div>';
+        return;
+      }
+
+      const canals = buildStakeCanalSeries(stageMap, gates, stakeMap);
+      if (!canals.length) {
+        Plotly.purge(waterlinePlotEl);
+        waterlinePlotEl.innerHTML = '<div class="chart-empty">离散点模式无可匹配的 stake 点位（请检查 stake.json 与 gates_mesh.csv 对应）。</div>';
+        return;
+      }
+
+      const gateTypeByName = buildGateTypeMapFromEdges(edges);
+      const flowByAnyName = (flowMap && flowMap.byName instanceof Map) ? flowMap.byName : new Map();
+      const flowByCanon = new Map();
+      flowByAnyName.forEach((values, key) => {
+        const canon = canonicalName(normalizeHeader(key));
+        if (canon && !flowByCanon.has(canon)) flowByCanon.set(canon, values);
+      });
+      const resolveFlowSeries = (name) => {
+        const key = String(name || '').trim();
+        if (!key) return [];
+        if (flowByAnyName.has(key)) return flowByAnyName.get(key) || [];
+        const canon = canonicalName(normalizeHeader(key));
+        if (canon && flowByCanon.has(canon)) return flowByCanon.get(canon) || [];
+        return [];
+      };
+
+      const canalExt = canals.map((canal) => {
+        const controlIdx = [];
+        canal.nodeNames.forEach((name, idx) => {
+          const t = Number(gateTypeByName.get(name));
+          if (t === 0 || t === 4) controlIdx.push(idx);
+        });
+        const segmentDefs = [];
+        for (let i = 0; i < controlIdx.length - 1; i += 1) {
+          const startIdx = controlIdx[i];
+          const endIdx = controlIdx[i + 1];
+          const upstreamGate = canal.nodeNames[startIdx];
+          const downstreamGate = canal.nodeNames[endIdx];
+          const diversionTargets = [];
+          (Array.isArray(edges) ? edges : []).forEach((edge) => {
+            if (!edge) return;
+            if (String(edge.connectionType || '').trim() !== 'direct') return;
+            if (String(edge.source || '').trim() !== upstreamGate) return;
+            const edgeType = Number(edge.edgeType);
+            if (!(edgeType === 2 || edgeType === 6)) return;
+            const edgeCanal = String(edge.canal || '').trim();
+            const canalName = String(canal.canalName || '').trim();
+            if (edgeCanal && canalName && edgeCanal !== canalName) return;
+            const targetName = String(edge.target || '').trim();
+            if (!isValidNodeName(targetName)) return;
+            if (targetName === upstreamGate || targetName === downstreamGate) return;
+            diversionTargets.push(targetName);
+          });
+
+          const seen = new Set();
+          const diversionSeriesEntries = [];
+          diversionTargets.forEach((targetName) => {
+            const canon = canonicalName(normalizeHeader(targetName));
+            if (!canon || seen.has(canon)) return;
+            seen.add(canon);
+            diversionSeriesEntries.push({
+              name: targetName,
+              values: resolveFlowSeries(targetName)
+            });
+          });
+
+          segmentDefs.push({
+            x: (canal.x[startIdx] + canal.x[endIdx]) / 2,
+            label: upstreamGate + '→' + downstreamGate,
+            diversionSeriesEntries
+          });
+        }
+
+        const buildWaterY = (timeIdx) => canal.seriesList.map((arr, i) => {
+          const v = arr[timeIdx];
+          const z = canal.zList[i];
+          if (!Number.isFinite(v)) return null;
+          return Number.isFinite(z) ? (v + z) : v;
+        });
+        const buildGateFlowY = (timeIdx) => canal.nodeNames.map((name) => {
+          const t = Number(gateTypeByName.get(name));
+          if (!(t === 0 || t === 4)) return null;
+          const arr = resolveFlowSeries(name);
+          const v = arr[timeIdx];
+          return Number.isFinite(v) ? v : null;
+        });
+        const buildDiversionSegmentSumY = (timeIdx) => segmentDefs.map((seg) => {
+          let sum = 0;
+          let hasFinite = false;
+          for (let i = 0; i < seg.diversionSeriesEntries.length; i += 1) {
+            const arr = seg.diversionSeriesEntries[i].values || [];
+            const v = arr[timeIdx];
+            if (!Number.isFinite(v)) continue;
+            sum += v;
+            hasFinite = true;
+          }
+          return hasFinite ? sum : 0;
+        });
+
+        const finiteVals = [];
+        for (let ti = 0; ti < timeline.length; ti += 1) {
+          const yWater = buildWaterY(ti);
+          const yGate = buildGateFlowY(ti);
+          const yDiv = buildDiversionSegmentSumY(ti);
+          yWater.forEach((v) => { if (Number.isFinite(v)) finiteVals.push(v); });
+          yGate.forEach((v) => { if (Number.isFinite(v)) finiteVals.push(v); });
+          yDiv.forEach((v) => { if (Number.isFinite(v)) finiteVals.push(v); });
+        }
+        canal.zList.forEach((z) => { if (Number.isFinite(z)) finiteVals.push(z); });
+        const yMin = finiteVals.length ? Math.min.apply(null, finiteVals) : -1;
+        const yMax = finiteVals.length ? Math.max.apply(null, finiteVals) : 1;
+        const ySpan = Math.max(1, yMax - yMin);
+        const yPad = Math.max(0.6, ySpan * 0.12);
+        const yRange = [yMin - yPad, yMax + yPad];
+
+        return { canal, segmentDefs, buildWaterY, buildGateFlowY, buildDiversionSegmentSumY, yRange };
+      });
+
+      const traces = [];
+      const traceCountPerCanal = 4;
+      canalExt.forEach((ext, idx) => {
+        const canal = ext.canal;
+        const waterY0 = ext.buildWaterY(0);
+        const bedY = canal.zList.map((z) => Number.isFinite(z) ? z : null);
+        const gateFlowY = ext.buildGateFlowY(0);
+        const diversionFlowY = ext.buildDiversionSegmentSumY(0);
+        const diversionX = ext.segmentDefs.map((seg) => seg.x);
+        const diversionLabel = ext.segmentDefs.map((seg) => seg.label);
+        const axisSuffix = idx === 0 ? '' : String(idx + 1);
+
+        traces.push({
+          type: 'scatter',
+          mode: 'lines+markers',
+          x: canal.x,
+          y: waterY0,
+          text: canal.labels,
+          hovertemplate: '%{text}<br>水面高程=%{y:.3f} m<extra></extra>',
+          line: { width: 2, color: '#0f766e' },
+          marker: { size: 4, color: '#0f766e' },
+          xaxis: 'x' + axisSuffix,
+          yaxis: 'y' + axisSuffix,
+          showlegend: false
+        });
+        traces.push({
+          type: 'scatter',
+          mode: 'lines',
+          x: canal.x,
+          y: bedY,
+          text: canal.labels,
+          hovertemplate: '%{text}<br>渠底高程=%{y:.3f} m<extra></extra>',
+          line: { width: 1.6, color: 'rgba(120,72,32,0.95)' },
+          xaxis: 'x' + axisSuffix,
+          yaxis: 'y' + axisSuffix,
+          showlegend: false
+        });
+        traces.push({
+          type: 'scatter',
+          mode: 'lines+markers',
+          x: canal.x,
+          y: gateFlowY,
+          text: canal.labels,
+          hovertemplate: '%{text}<br>节制闸流量=%{y:.3f} m^3/s<extra></extra>',
+          line: { width: 2, color: '#2563eb', dash: 'dash' },
+          marker: { size: 4, color: '#2563eb' },
+          xaxis: 'x' + axisSuffix,
+          yaxis: 'y' + axisSuffix,
+          showlegend: false
+        });
+        traces.push({
+          type: 'bar',
+          x: diversionX,
+          y: diversionFlowY,
+          text: diversionLabel,
+          hovertemplate: '%{text}<br>分水/渗漏流量和(type=2/6)=%{y:.3f} m^3/s<extra></extra>',
+          marker: {
+            color: 'rgba(249,115,22,0.52)',
+            line: { color: 'rgba(194,65,12,0.9)', width: 1 }
+          },
+          opacity: 0.78,
+          xaxis: 'x' + axisSuffix,
+          yaxis: 'y' + axisSuffix,
+          showlegend: false
+        });
+      });
+
+      const frames = timeline.map((tm, ti) => ({
+        name: String(ti + 1),
+        data: canalExt.flatMap((ext) => {
+          const canal = ext.canal;
+          const diversionX = ext.segmentDefs.map((seg) => seg.x);
+          const diversionLabel = ext.segmentDefs.map((seg) => seg.label);
+          return [{
+            x: canal.x,
+            y: ext.buildWaterY(ti),
+            text: canal.labels
+          }, {
+            x: canal.x,
+            y: canal.zList.map((z) => Number.isFinite(z) ? z : null),
+            text: canal.labels
+          }, {
+            x: canal.x,
+            y: ext.buildGateFlowY(ti),
+            text: canal.labels
+          }, {
+            x: diversionX,
+            y: ext.buildDiversionSegmentSumY(ti),
+            text: diversionLabel
+          }];
+        }),
+        traces: canalExt.flatMap((_, idx) => {
+          const base = idx * traceCountPerCanal;
+          return [base, base + 1, base + 2, base + 3];
+        }),
+        layout: {}
+      }));
+
+      const sliderSteps = timeline.map((tm, idx) => ({
+        method: 'animate',
+        label: String(idx + 1),
+        args: [[String(idx + 1)], { mode: 'immediate', frame: { duration: 0, redraw: true }, transition: { duration: 0 } }]
+      }));
+
+      const layout = {
+        margin: { l: 44, r: 12, t: 8, b: 24 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        showlegend: false,
+        grid: {
+          rows: canals.length,
+          columns: 1,
+          pattern: 'independent',
+          roworder: 'top to bottom'
+        },
+        sliders: [{
+          active: 0,
+          x: 0,
+          y: -0.04,
+          len: 1,
+          pad: { t: 0, b: 0 },
+          currentvalue: { visible: false },
+          bgcolor: 'rgba(15,118,110,0.14)',
+          bordercolor: 'rgba(15,118,110,0.55)',
+          borderwidth: 1,
+          activebgcolor: 'rgba(15,118,110,0.75)',
+          tickcolor: 'rgba(15,118,110,0.7)',
+          steps: sliderSteps
+        }],
+        annotations: []
+      };
+
+      canalExt.forEach((ext, idx) => {
+        const canal = ext.canal;
+        const suffix = idx === 0 ? '' : String(idx + 1);
+        const yAxis = 'yaxis' + suffix;
+        const xAxis = 'xaxis' + suffix;
+        layout[xAxis] = {
+          title: { text: idx === canals.length - 1 ? '桩号' : '', standoff: 2, font: { size: 10 } },
+          tickfont: { size: 9, color: '#334155' },
+          showgrid: true,
+          gridcolor: 'rgba(148,163,184,0.14)',
+          zeroline: false,
+          automargin: true
+        };
+        layout[yAxis] = {
+          title: { text: '高程(m)', standoff: 2, font: { size: 9 } },
+          tickfont: { size: 9, color: '#334155' },
+          range: ext.yRange,
+          showgrid: true,
+          gridcolor: 'rgba(148,163,184,0.2)',
+          zeroline: false,
+          automargin: true
+        };
+      });
+      layout.shapes = [];
+      canalExt.forEach((ext, idx) => {
+        const suffix = idx === 0 ? '' : String(idx + 1);
+        const xref = 'x' + suffix;
+        const yref = 'y' + suffix;
+        const y0 = ext.yRange[0];
+        const y1 = ext.yRange[1];
+        ext.canal.x.forEach((stakeX) => {
+          layout.shapes.push({
+            type: 'line',
+            xref: xref,
+            yref: yref,
+            x0: stakeX,
+            x1: stakeX,
+            y0: y0,
+            y1: y1,
+            line: {
+              color: 'rgba(220,38,38,0.72)',
+              width: 1,
+              dash: 'dot'
+            },
+            layer: 'below'
+          });
+        });
+      });
+
+      currentWaterlineView = null;
+
+      Plotly.newPlot(waterlinePlotEl, traces, layout, {
+        displayModeBar: true,
+        responsive: true,
+        scrollZoom: true,
+        modeBarButtonsToRemove: [
+          'zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d',
+          'hoverClosestCartesian', 'hoverCompareCartesian', 'toggleSpikelines', 'toImage'
+        ],
+        modeBarButtonsToAdd: ['autoScale2d', 'resetScale2d']
+      }).then(() => {
+        Plotly.addFrames(waterlinePlotEl, frames);
+        setWaterlineMeta('离散点模式(' + canals.length + '条渠段)', 1, timeline[0]);
+        waterlinePlotEl.on('plotly_sliderchange', (evt) => {
+          const step = evt && evt.step ? evt.step : null;
+          const label = step ? String(step.label || '') : '';
+          const idx = Math.max(0, Number(label) - 1);
+          const tm = timeline[idx] || timeline[0] || '-';
+          setWaterlineMeta('离散点模式(' + canals.length + '条渠段)', idx + 1, tm);
+        });
+      });
+    }
+
+    function setWaterlineMode(mode) {
+      const next = mode === 'stake' ? 'stake' : 'gate';
+      if (waterlineMode === next) return;
+      waterlineMode = next;
+      if (waterlineModeBtnEl) {
+        waterlineModeBtnEl.textContent = waterlineMode === 'stake' ? '闸门模式' : '离散点模式';
+      }
+      renderDynamicWaterline(currentStageMap, currentEdges, currentGateRows, currentFlowMap, currentStakeMap);
+    }
+
+    // ---------- 渠道解析 ----------
+    function parseTsv(text) {
+      const lines = text.split(/\r?\n/);
+      return lines
+        .filter(l => l.trim() && !l.startsWith(';'))
+        .map(l => l.split('\t'));
+    }
+
+    function buildEdgeSegmentLabel(edge) {
+      if (!edge) return '';
+      const fromName = String(edge.source || '').trim();
+      const toNameRaw = isValidNodeName(edge.target) ? edge.target : edge.end;
+      const toName = String(toNameRaw || '').trim();
+      const canal = String(edge.canal || '').trim();
+      const base = fromName && toName ? (fromName + '→' + toName) : (fromName || toName);
+      if (!base) return canal;
+      return canal ? (base + '（' + canal + '）') : base;
+    }
+
+    function parseGatesIni(iniText) {
+      const lines = String(iniText || '').split(/\r?\n/);
+      const items = [];
+      let current = null;
+      for (let i = 0; i < lines.length; i += 1) {
+        const raw = String(lines[i] || '').trim();
+        if (!raw || raw.startsWith(';')) continue;
+        const sec = raw.match(/^\[(.+)\]$/);
+        if (sec) {
+          if (current && current.name) items.push(current);
+          current = { section: sec[1], name: '', nIndex: '' };
+          continue;
+        }
+        if (!current) continue;
+        const p = raw.indexOf('=');
+        if (p < 0) continue;
+        const key = normalizeHeader(raw.slice(0, p)).toLowerCase();
+        const val = normalizeHeader(raw.slice(p + 1));
+        if (key === 'name') current.name = val;
+        if (key === 'nindex') current.nIndex = val;
+      }
+      if (current && current.name) items.push(current);
+      return items;
+    }
+
+    function buildGatesFromIniAndInput(gatesIniText, inputText) {
+      const nodeById = new Map();
+      parseTsv(inputText).forEach((cols) => {
+        const id = String(cols[0] || '').trim();
+        if (!id) return;
+        const x = Number(cols[1]);
+        const y = Number(cols[2]);
+        const z = Number(cols[3]);
+        const type = String(cols[4] || '').trim();
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        nodeById.set(id, { id, x, y, z, type });
+      });
+
+      const iniItems = parseGatesIni(gatesIniText);
+      const rows = [];
+      const seen = new Set();
+      iniItems.forEach((item) => {
+        const id = String(item.nIndex || '').trim();
+        const name = String(item.name || '').trim();
+        if (!id || !name) return;
+        const node = nodeById.get(id);
+        if (!node) return;
+        const key = id + '|' + canonicalName(name);
+        if (seen.has(key)) return;
+        seen.add(key);
+        rows.push({
+          id: node.id,
+          name,
+          x: node.x,
+          y: node.y,
+          z: Number.isFinite(node.z) ? node.z : NaN,
+          type: node.type
+        });
+      });
+      return rows;
+    }
+
+    function isGateMeshOneToOne(gatesMeshRows, iniDerivedRows) {
+      const a = Array.isArray(gatesMeshRows) ? gatesMeshRows : [];
+      const b = Array.isArray(iniDerivedRows) ? iniDerivedRows : [];
+      if (!a.length || !b.length) return false;
+      const mapA = new Map();
+      const mapB = new Map();
+      a.forEach((r) => {
+        const nameKey = canonicalName(r && r.name);
+        const id = String(r && r.id || '').trim();
+        if (!nameKey || !id) return;
+        if (!mapA.has(nameKey)) mapA.set(nameKey, id);
+      });
+      b.forEach((r) => {
+        const nameKey = canonicalName(r && r.name);
+        const id = String(r && r.id || '').trim();
+        if (!nameKey || !id) return;
+        if (!mapB.has(nameKey)) mapB.set(nameKey, id);
+      });
+      if (!mapA.size || !mapB.size || mapA.size !== mapB.size) return false;
+      let ok = true;
+      mapA.forEach((id, nameKey) => {
+        if (!ok) return;
+        if (!mapB.has(nameKey) || String(mapB.get(nameKey)) !== String(id)) ok = false;
+      });
+      return ok;
+    }
+
+    function buildTimelineInfo(timeline) {
+      const t = Array.isArray(timeline) ? timeline : [];
+      const start = t.length ? String(t[0] || '').trim() : '-';
+      const end = t.length ? String(t[t.length - 1] || '').trim() : '-';
+      let step = '-';
+      if (t.length >= 2) {
+        const a = Date.parse(String(t[0]).replace(' ', 'T'));
+        const b = Date.parse(String(t[1]).replace(' ', 'T'));
+        if (Number.isFinite(a) && Number.isFinite(b) && b > a) {
+          const diffMs = b - a;
+          const minutes = Math.round(diffMs / 60000);
+          if (minutes % 1440 === 0) {
+            step = (minutes / 1440) + '天';
+          } else if (minutes % 60 === 0) {
+            step = (minutes / 60) + '小时';
+          } else {
+            step = minutes + '分钟';
+          }
+        }
+      }
+      return { start, end, step };
+    }
+
+    function buildTimelineInfoHtml(timeline) {
+      const info = buildTimelineInfo(timeline);
+      return [
+        '<div class="detail-chart-meta"><span>起始时间=' + info.start + '</span><span>结束时间=' + info.end + '</span></div>',
+        '<div class="detail-chart-meta"><span>时间步长=' + info.step + '</span><span>x轴=时间步序号</span></div>'
+      ].join('');
+    }
+
+    function setGatePaneMeta(timeline) {
+      if (!gatePaneMetaEl) return;
+      const info = buildTimelineInfo(timeline || []);
+      gatePaneMetaEl.textContent = '起始时间=' + info.start + ' | 时间步长=' + info.step + ' | 结束时间=' + info.end + ' | x轴=时间步序号';
+    }
+
+    function setChannelPaneMeta(timeline) {
+      if (!channelPaneMetaEl) return;
+      const info = buildTimelineInfo(timeline || []);
+      channelPaneMetaEl.textContent = '起始时间=' + info.start + ' | 时间步长=' + info.step + ' | 结束时间=' + info.end + ' | x轴=时间步序号';
+    }
+
+    function buildWaterlineBaseSeries(stageMap, edges, gates) {
+      const edgeList = (Array.isArray(edges) ? edges : []).filter((edge) =>
+        edge && edge.connectionType === 'indirect' && isValidNodeName(edge.source) && isValidNodeName(edge.target)
+      );
+      if (!edgeList.length) return null;
+
+      const gateNameSet = new Set((Array.isArray(gates) ? gates : []).map((g) => String(g && g.name ? g.name : '').trim()).filter(Boolean));
+
+      const byCanal = new Map();
+      edgeList.forEach((edge) => {
+        const canal = String(edge.canal || '').trim() || '未分组渠段';
+        if (!byCanal.has(canal)) byCanal.set(canal, []);
+        byCanal.get(canal).push(edge);
+      });
+
+      let bestCanal = '';
+      let bestList = [];
+      let bestNodes = [];
+      byCanal.forEach((list, canal) => {
+        const nodeSeq = [];
+        list.forEach((edge) => {
+          const fromName = String(edge.source || '').trim();
+          const toName = String(edge.target || '').trim();
+          if (!fromName || !toName) return;
+          if (!nodeSeq.length || nodeSeq[nodeSeq.length - 1] !== fromName) nodeSeq.push(fromName);
+          if (nodeSeq[nodeSeq.length - 1] !== toName) nodeSeq.push(toName);
+        });
+
+        const bridgedNodes = [];
+        nodeSeq.forEach((name) => {
+          const isExisting = gateNameSet.size ? gateNameSet.has(name) : true;
+          if (!isExisting) return;
+          if (!bridgedNodes.length || bridgedNodes[bridgedNodes.length - 1] !== name) bridgedNodes.push(name);
+        });
+
+        const score = bridgedNodes.length;
+        const bestScore = bestNodes.length;
+        if (!bestList.length || score > bestScore) {
+          bestCanal = canal;
+          bestList = list;
+          bestNodes = bridgedNodes;
+        }
+      });
+      if (!bestList.length) return null;
+
+      const inCount = new Map();
+      const nextBySource = new Map();
+      bestList.forEach((edge) => {
+        const s = edge.source;
+        const t = edge.target;
+        if (!nextBySource.has(s)) nextBySource.set(s, edge);
+        inCount.set(t, (inCount.get(t) || 0) + 1);
+        if (!inCount.has(s)) inCount.set(s, inCount.get(s) || 0);
+      });
+
+      let start = '';
+      nextBySource.forEach((_, source) => {
+        if ((inCount.get(source) || 0) === 0 && !start) start = source;
+      });
+      if (!start) start = bestList[0].source;
+
+      const orderedNodes = [];
+      if (bestNodes.length >= 2) {
+        bestNodes.forEach((n) => orderedNodes.push(n));
+      } else {
+        const visited = new Set();
+        let cur = start;
+        while (cur && !visited.has(cur)) {
+          const isExisting = gateNameSet.size ? gateNameSet.has(cur) : true;
+          if (isExisting) orderedNodes.push(cur);
+          visited.add(cur);
+          const edge = nextBySource.get(cur);
+          if (!edge || !edge.target) break;
+          cur = edge.target;
+        }
+      }
+
+      if (orderedNodes.length < 2) return null;
+
+      const xValues = [];
+      const xLabels = [];
+      orderedNodes.forEach((name, idx) => {
+        const edge = nextBySource.get(name);
+        const stake = edge ? Number(edge.stake) : NaN;
+        xValues.push(Number.isFinite(stake) ? stake : idx + 1);
+        xLabels.push(name);
+      });
+
+      return { canal: bestCanal, orderedNodes, xValues, xLabels };
+    }
+
+    function buildNodeBottomElevationMap(orderedNodes, gates) {
+      const byNode = new Map();
+      const directMap = new Map();
+      const canonMap = new Map();
+      const gateList = Array.isArray(gates) ? gates : [];
+
+      gateList.forEach((gate) => {
+        const name = String(gate && gate.name || '').trim();
+        const z = Number(gate && gate.z);
+        if (!name || !Number.isFinite(z)) return;
+        if (!directMap.has(name)) directMap.set(name, z);
+        const canon = canonicalName(normalizeHeader(name));
+        if (canon && !canonMap.has(canon)) canonMap.set(canon, z);
+      });
+
+      orderedNodes.forEach((name) => {
+        const nodeName = String(name || '').trim();
+        if (!nodeName) return;
+        if (directMap.has(nodeName)) {
+          byNode.set(nodeName, directMap.get(nodeName));
+          return;
+        }
+        const canon = canonicalName(normalizeHeader(nodeName));
+        if (canon && canonMap.has(canon)) byNode.set(nodeName, canonMap.get(canon));
+      });
+
+      return byNode;
+    }
+
+    function buildSeriesMapByNode(orderedNodes, seriesByName) {
+      const byNode = new Map();
+      const src = (seriesByName instanceof Map) ? seriesByName : new Map();
+      const canonMap = new Map();
+
+      src.forEach((values, key) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        const canon = canonicalName(normalizeHeader(name));
+        if (canon && !canonMap.has(canon)) canonMap.set(canon, values);
+      });
+
+      (Array.isArray(orderedNodes) ? orderedNodes : []).forEach((nodeNameRaw) => {
+        const nodeName = String(nodeNameRaw || '').trim();
+        if (!nodeName) return;
+        if (src.has(nodeName)) {
+          byNode.set(nodeName, src.get(nodeName));
+          return;
+        }
+        const canon = canonicalName(normalizeHeader(nodeName));
+        if (canon && canonMap.has(canon)) byNode.set(nodeName, canonMap.get(canon));
+      });
+
+      return byNode;
+    }
+
+    function renderDynamicWaterline(stageMap, edges, gates, flowMap, stakeMap) {
+      if (!waterlinePlotEl || !window.Plotly) return;
+      if (waterlineMode === 'stake') {
+        renderDynamicWaterlineStakeMode(stageMap, edges, gates, flowMap, stakeMap);
+        return;
+      }
+      const base = buildWaterlineBaseSeries(stageMap, edges, gates);
+      if (!base || !Array.isArray(stageMap.timeline) || !stageMap.timeline.length) {
+        Plotly.purge(waterlinePlotEl);
+        waterlinePlotEl.innerHTML = '<div class="chart-empty">动态水面线无可用数据。</div>';
+        return;
+      }
+
+      const timeline = stageMap.timeline;
+      const nodeBottomMap = buildNodeBottomElevationMap(base.orderedNodes, gates);
+      const bedY = base.orderedNodes.map((name) => {
+        const z = nodeBottomMap.get(name);
+        return Number.isFinite(z) ? z : null;
+      });
+      const buildWaterY = (timeIdx) => base.orderedNodes.map((name) => {
+        const arr = stageMap.byName.get(name) || [];
+        const v = arr[timeIdx];
+        if (!Number.isFinite(v)) return null;
+        const zb = nodeBottomMap.get(name);
+        return Number.isFinite(zb) ? (v + zb) : v;
+      });
+      const flowByNode = buildSeriesMapByNode(base.orderedNodes, flowMap && flowMap.byName);
+      const gateTypeByName = buildGateTypeMapFromEdges(edges);
+      const nodeTypes = base.orderedNodes.map((name) => Number(gateTypeByName.get(name)));
+      const controlNodeIndexes = [];
+      for (let i = 0; i < nodeTypes.length; i += 1) {
+        if (nodeTypes[i] === 0 || nodeTypes[i] === 4) controlNodeIndexes.push(i);
+      }
+
+      const flowByAnyName = (flowMap && flowMap.byName instanceof Map) ? flowMap.byName : new Map();
+      const flowByCanon = new Map();
+      flowByAnyName.forEach((values, key) => {
+        const canon = canonicalName(normalizeHeader(key));
+        if (canon && !flowByCanon.has(canon)) flowByCanon.set(canon, values);
+      });
+      const dStarSeriesPool = [];
+      flowByAnyName.forEach((values, key) => {
+        const name = String(key || '').trim();
+        const m = name.match(/^d(\d+)$/i);
+        if (!m) return;
+        dStarSeriesPool.push({
+          name,
+          order: Number(m[1]),
+          values: Array.isArray(values) ? values : []
+        });
+      });
+      dStarSeriesPool.sort((a, b) => a.order - b.order);
+      let dStarCursor = 0;
+
+      const resolveFlowSeries = (name) => {
+        const key = String(name || '').trim();
+        if (!key) return [];
+        if (flowByAnyName.has(key)) return flowByAnyName.get(key) || [];
+        const canon = canonicalName(normalizeHeader(key));
+        if (canon && flowByCanon.has(canon)) return flowByCanon.get(canon) || [];
+        return [];
+      };
+
+      const segmentDefs = [];
+      for (let i = 0; i < controlNodeIndexes.length - 1; i += 1) {
+        const startIdx = controlNodeIndexes[i];
+        const endIdx = controlNodeIndexes[i + 1];
+        const upstreamGate = base.orderedNodes[startIdx];
+        const downstreamGate = base.orderedNodes[endIdx];
+        const diversionTargets = [];
+        (Array.isArray(edges) ? edges : []).forEach((edge) => {
+          if (!edge) return;
+          if (String(edge.connectionType || '').trim() !== 'direct') return;
+          if (String(edge.source || '').trim() !== upstreamGate) return;
+          const edgeType = Number(edge.edgeType);
+          if (!(edgeType === 2 || edgeType === 6)) return;
+          const targetName = String(edge.target || '').trim();
+          if (!isValidNodeName(targetName)) return;
+          // direct 定义下 target 隶属 source 所在渠段，这里排除上下游节制闸本身
+          if (targetName === upstreamGate || targetName === downstreamGate) return;
+          diversionTargets.push(targetName);
+        });
+
+        const seen = new Set();
+        const diversionSeriesEntries = [];
+        diversionTargets.forEach((targetName) => {
+          const canon = canonicalName(normalizeHeader(targetName));
+          if (!canon || seen.has(canon)) return;
+          seen.add(canon);
+          let values = resolveFlowSeries(targetName);
+          let seriesName = targetName;
+          if (!values.length && dStarCursor < dStarSeriesPool.length) {
+            const fallback = dStarSeriesPool[dStarCursor++];
+            values = fallback.values;
+            seriesName = targetName + '→' + fallback.name;
+          }
+          diversionSeriesEntries.push({
+            name: seriesName,
+            values: values
+          });
+        });
+
+        segmentDefs.push({
+          startIdx,
+          endIdx,
+          diversionSeriesEntries,
+          x: (startIdx + 1 + endIdx + 1) / 2,
+          label: base.orderedNodes[startIdx] + '→' + base.orderedNodes[endIdx]
+        });
+      }
+
+      const buildGateFlowY = (timeIdx) => base.orderedNodes.map((name) => {
+        const gateType = Number(gateTypeByName.get(name));
+        if (!(gateType === 0 || gateType === 4)) return null;
+        const arr = flowByNode.get(name) || [];
+        const v = arr[timeIdx];
+        return Number.isFinite(v) ? v : null;
+      });
+      const buildDiversionSegmentSumY = (timeIdx) => segmentDefs.map((seg) => {
+        let sum = 0;
+        let hasFinite = false;
+        for (let i = 0; i < seg.diversionSeriesEntries.length; i += 1) {
+          const arr = seg.diversionSeriesEntries[i].values || [];
+          const v = arr[timeIdx];
+          if (!Number.isFinite(v)) continue;
+          sum += v;
+          hasFinite = true;
+        }
+        return hasFinite ? sum : 0;
+      });
+
+      const allFinite = [];
+      for (let ti = 0; ti < timeline.length; ti += 1) {
+        const y = buildWaterY(ti);
+        for (let yi = 0; yi < y.length; yi += 1) {
+          if (Number.isFinite(y[yi])) allFinite.push(y[yi]);
+        }
+      }
+      bedY.forEach((z) => {
+        if (Number.isFinite(z)) allFinite.push(z);
+      });
+      const yMin = allFinite.length ? Math.min.apply(null, allFinite) : 0;
+      const yMax = allFinite.length ? Math.max.apply(null, allFinite) : 1;
+      const ySpan = Math.max(0.6, yMax - yMin);
+      const yPad = Math.max(1.0, ySpan * 0.65);
+      const yRange = [yMin - yPad, yMax + yPad];
+      const allFlowFinite = [];
+      for (let ti = 0; ti < timeline.length; ti += 1) {
+        const gateFlowY = buildGateFlowY(ti);
+        for (let yi = 0; yi < gateFlowY.length; yi += 1) {
+          if (Number.isFinite(gateFlowY[yi])) allFlowFinite.push(gateFlowY[yi]);
+        }
+        const segSumY = buildDiversionSegmentSumY(ti);
+        for (let yi = 0; yi < segSumY.length; yi += 1) {
+          if (Number.isFinite(segSumY[yi])) allFlowFinite.push(segSumY[yi]);
+        }
+      }
+      const flowMin = allFlowFinite.length ? Math.min.apply(null, allFlowFinite) : -1;
+      const flowMax = allFlowFinite.length ? Math.max.apply(null, allFlowFinite) : 1;
+      const flowSpan = Math.max(1, flowMax - flowMin);
+      const flowPad = Math.max(0.6, flowSpan * 0.15);
+      const flowRange = [flowMin - flowPad, flowMax + flowPad];
+      const xTickVals = base.orderedNodes.map((_, idx) => idx + 1);
+      const xTickText = base.xLabels.slice();
+      const xRange = [0.5, xTickVals.length + 0.5];
+      currentWaterlineView = { xRange: xRange.slice(), yRange: yRange.slice() };
+      const customData = base.orderedNodes.map((name, idx) => [
+        base.xValues[idx],
+        Number.isFinite(bedY[idx]) ? bedY[idx] : null
+      ]);
+
+      const initialY = buildWaterY(0);
+      const initialGateFlowY = buildGateFlowY(0);
+      const initialDiversionFlowY = buildDiversionSegmentSumY(0);
+      const diversionBarX = segmentDefs.map((seg) => seg.x);
+      const diversionBarLabel = segmentDefs.map((seg) => seg.label);
+      const diversionBarSeriesLabel = segmentDefs.map((seg) => seg.diversionSeriesEntries.map((entry) => entry.name).join('+'));
+      const traces = [{
+        type: 'scatter',
+        mode: 'lines',
+        x: xTickVals,
+        y: initialY,
+        customdata: customData,
+        text: base.xLabels,
+        hovertemplate: '节点=%{text}<br>空间坐标=%{customdata[0]}<br>渠底高程=%{customdata[1]:.3f} m<br>水面高程=%{y:.3f} m<extra></extra>',
+        line: { color: '#0f766e', width: 3 },
+        name: '水面高程'
+      }, {
+        type: 'scatter',
+        mode: 'lines',
+        x: xTickVals,
+        y: bedY,
+        text: base.xLabels,
+        hovertemplate: '节点=%{text}<br>渠底高程=%{y:.3f} m<extra></extra>',
+        line: { color: 'rgba(120,72,32,0.95)', width: 1.8 },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(120,72,32,0.28)',
+        name: '渠底高程'
+      }, {
+        type: 'scatter',
+        mode: 'lines+markers',
+        x: xTickVals,
+        y: initialGateFlowY,
+        text: base.xLabels,
+        hovertemplate: '节点=%{text}<br>节制闸流量(type=0/4)=%{y:.3f} m^3/s<extra></extra>',
+        line: { color: '#2563eb', width: 2, dash: 'dash' },
+        marker: { color: '#2563eb', size: 4 },
+        yaxis: 'y2',
+        name: '节制闸流量(type=0/4)'
+      }, {
+        type: 'bar',
+        x: diversionBarX,
+        y: initialDiversionFlowY,
+        text: diversionBarLabel,
+        customdata: segmentDefs.map((seg, idx) => [seg.diversionSeriesEntries.length, diversionBarSeriesLabel[idx]]),
+        hovertemplate: '区间=%{text}<br>分水/渗漏个数(type=2/6)=%{customdata[0]}<br>对象=%{customdata[1]}<br>分水/渗漏流量和=%{y:.3f} m^3/s<extra></extra>',
+        marker: { color: 'rgba(249,115,22,0.72)', line: { color: 'rgba(194,65,12,0.85)', width: 0.8 } },
+        yaxis: 'y2',
+        name: '区间分水/渗漏流量和(type=2/6)',
+        opacity: 0.92
+      }];
+
+      const frames = timeline.map((tm, idx) => ({
+        name: String(idx + 1),
+        data: [
+          { y: buildWaterY(idx), x: xTickVals, text: base.xLabels, customdata: customData },
+          { y: buildGateFlowY(idx), x: xTickVals, text: base.xLabels },
+          { y: buildDiversionSegmentSumY(idx), x: diversionBarX, text: diversionBarLabel }
+        ],
+        traces: [0, 2, 3],
+        layout: {}
+      }));
+
+      const sliderSteps = timeline.map((tm, idx) => ({
+        method: 'animate',
+        label: String(idx + 1),
+        args: [[String(idx + 1)], { mode: 'immediate', frame: { duration: 0, redraw: true }, transition: { duration: 0 } }]
+      }));
+
+      const layout = {
+        margin: { l: 42, r: 8, t: 4, b: 22 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        barmode: 'overlay',
+        showlegend: false,
+        xaxis: {
+          title: { text: '', standoff: 0, font: { size: 1, color: 'rgba(0,0,0,0)' } },
+          showticklabels: true,
+          ticks: 'outside',
+          ticklen: 3,
+          tickcolor: 'rgba(100,116,139,0.6)',
+          tickmode: 'array',
+          tickvals: xTickVals,
+          ticktext: xTickText,
+          tickangle: -24,
+          tickfont: { size: 9, color: '#334155' },
+          showgrid: true,
+          gridcolor: 'rgba(148,163,184,0.16)',
+          zeroline: false,
+          showline: true,
+          linecolor: 'rgba(51,65,85,0.45)',
+          linewidth: 1,
+          range: xRange,
+          automargin: true
+        },
+        yaxis: {
+          title: { text: '高程 (m)', standoff: 2, font: { size: 10 } },
+          tickfont: { size: 10, color: '#334155' },
+          ticks: 'outside',
+          showgrid: true,
+          gridcolor: 'rgba(148,163,184,0.2)',
+          zeroline: false,
+          showline: true,
+          linecolor: 'rgba(51,65,85,0.45)',
+          linewidth: 1,
+          range: yRange,
+          automargin: true
+        },
+        yaxis2: {
+          title: { text: '流量 Q (m^3/s)', standoff: 2, font: { size: 10, color: '#1d4ed8' } },
+          tickfont: { size: 10, color: '#1d4ed8' },
+          overlaying: 'y',
+          side: 'right',
+          showgrid: false,
+          zeroline: false,
+          showline: true,
+          linecolor: 'rgba(37,99,235,0.55)',
+          linewidth: 1,
+          range: flowRange,
+          automargin: true
+        },
+        sliders: [{
+          active: 0,
+          x: 0,
+          y: -0.03,
+          len: 1,
+          pad: { t: 0, b: 0 },
+          currentvalue: { visible: false },
+          bgcolor: 'rgba(15,118,110,0.14)',
+          bordercolor: 'rgba(15,118,110,0.55)',
+          borderwidth: 1,
+          activebgcolor: 'rgba(15,118,110,0.75)',
+          tickcolor: 'rgba(15,118,110,0.7)',
+          steps: sliderSteps
+        }]
+      };
+
+      Plotly.newPlot(waterlinePlotEl, traces, layout, {
+        displayModeBar: true,
+        responsive: true,
+        scrollZoom: true,
+        modeBarButtonsToRemove: [
+          'zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d',
+          'hoverClosestCartesian', 'hoverCompareCartesian', 'toggleSpikelines', 'toImage'
+        ],
+        modeBarButtonsToAdd: ['autoScale2d', 'resetScale2d']
+      }).then(() => {
+        Plotly.addFrames(waterlinePlotEl, frames);
+        setWaterlineMeta(base.canal, 1, timeline[0]);
+        waterlinePlotEl.on('plotly_sliderchange', (evt) => {
+          const step = evt && evt.step ? evt.step : null;
+          const label = step ? String(step.label || '') : '';
+          const idx = Math.max(0, Number(label) - 1);
+          const tm = timeline[idx] || timeline[0] || '-';
+          setWaterlineMeta(base.canal, idx + 1, tm);
+        });
+      });
+    }
+
+    function buildEdgeSegmentsWithMissingBridge(edges, gateCoordByName) {
+      const segments = [];
+      const grouped = new Map();
+      const indirectEdges = (Array.isArray(edges) ? edges : []).filter((edge) => {
+        if (!edge || edge.connectionType !== 'indirect') return false;
+        if (!isValidNodeName(edge.source)) return false;
+        const toName = isValidNodeName(edge.target) ? edge.target : edge.end;
+        return isValidNodeName(toName);
+      });
+
+      indirectEdges.forEach((edge) => {
+        const canal = String(edge.canal || '').trim() || '未分组渠段';
+        if (!grouped.has(canal)) grouped.set(canal, []);
+        grouped.get(canal).push(edge);
+      });
+
+      grouped.forEach((edgeList, canal) => {
+        const nodeSeq = [];
+        edgeList.forEach((edge) => {
+          const fromName = String(edge.source || '').trim();
+          const toName = String((isValidNodeName(edge.target) ? edge.target : edge.end) || '').trim();
+          if (!fromName || !toName) return;
+          if (!nodeSeq.length || nodeSeq[nodeSeq.length - 1] !== fromName) nodeSeq.push(fromName);
+          if (nodeSeq[nodeSeq.length - 1] !== toName) nodeSeq.push(toName);
+        });
+
+        let lastExisting = '';
+        nodeSeq.forEach((name) => {
+          const coord = gateCoordByName.get(name);
+          if (!coord) return;
+          if (lastExisting && lastExisting !== name) {
+            const fromCoord = gateCoordByName.get(lastExisting);
+            const toCoord = coord;
+            if (fromCoord && toCoord) {
+              segments.push({
+                source: lastExisting,
+                target: name,
+                canal,
+                coords: [fromCoord, toCoord]
+              });
+            }
+          }
+          lastExisting = name;
+        });
+      });
+
+      return segments;
+    }
+
+    function loadChannelFeatures(inputText, neighborText, gates, edges) {
+      const features = [];
+      const segmentColorMap = new Map();
+      let colorIdx = 0;
+
+      // 优先按 edges.csv 的 indirect 渠段绘制与分色，确保颜色语义与渠段一致。
+      const gateCoordByName = new Map();
+      (Array.isArray(gates) ? gates : []).forEach((gate) => {
+        if (!gate || !gate.name || !Number.isFinite(gate.x) || !Number.isFinite(gate.y)) return;
+        gateCoordByName.set(gate.name, [gate.x, gate.y]);
+      });
+
+      const edgeSegments = buildEdgeSegmentsWithMissingBridge(edges, gateCoordByName);
+
+      edgeSegments.forEach((seg) => {
+        const segmentLabel = (seg.source + '→' + seg.target) + (seg.canal ? ('（' + seg.canal + '）') : '');
+        if (!segmentColorMap.has(segmentLabel)) {
+          segmentColorMap.set(segmentLabel, CHANNEL_PALETTE[colorIdx % CHANNEL_PALETTE.length]);
+          colorIdx++;
+        }
+        features.push(new ol.Feature({
+          geometry: new ol.geom.LineString(seg.coords),
+          source: seg.source,
+          target: seg.target,
+          canal: seg.canal,
+          attr: segmentLabel,
+          segmentLabel,
+          color: segmentColorMap.get(segmentLabel)
+        }));
+      });
+
+      if (features.length) {
+        return { features, segmentColorMap };
+      }
+
+      // 回退：如果 edges 渠段无法绘制，则仍按原 mesh line_attr 绘制。
+      // 解析节点坐标与线属性
+      const nodeMap = new Map();
+      parseTsv(inputText).forEach(cols => {
+        const id = parseInt(cols[0], 10);
+        const x = parseFloat(cols[1]);
+        const y = parseFloat(cols[2]);
+        const attr = (cols[4] || '').trim();
+        if (!isNaN(id) && isFinite(x) && isFinite(y)) {
+          nodeMap.set(id, { x, y, attr });
+        }
+      });
+
+      // 解析邻接关系
+      const nbMap = new Map();
+      parseTsv(neighborText).forEach(cols => {
+        const id = parseInt(cols[0], 10);
+        const pre = parseInt(cols[2], 10);
+        const next = parseInt(cols[3], 10);
+        if (!isNaN(id)) nbMap.set(id, { pre, next });
+      });
+
+      // 按 line_attr 分组，找各组起点（pre===-1）
+      const attrGroups = new Map();
+      nodeMap.forEach((node, id) => {
+        const key = node.attr;
+        if (!attrGroups.has(key)) attrGroups.set(key, []);
+        attrGroups.get(key).push(id);
+      });
+
+      attrGroups.forEach((ids, attr) => {
+        // 找起点（pre===-1）；若没有则任取第一个
+        let startId = ids.find(id => {
+          const nb = nbMap.get(id);
+          return nb && nb.pre === -1;
+        });
+        if (startId === undefined) startId = ids[0];
+
+        // 沿 next 链路构建坐标序列
+        const visited = new Set();
+        const coords = [];
+        let cur = startId;
+        while (cur !== undefined && cur !== -1 && !visited.has(cur)) {
+          visited.add(cur);
+          const node = nodeMap.get(cur);
+          if (!node) break;
+          coords.push([node.x, node.y]);
+          const nb = nbMap.get(cur);
+          cur = nb ? nb.next : -1;
+        }
+
+        if (coords.length < 2) return;
+
+        const segmentLabel = attr;
+
+        if (!segmentColorMap.has(segmentLabel)) {
+          segmentColorMap.set(segmentLabel, CHANNEL_PALETTE[colorIdx % CHANNEL_PALETTE.length]);
+          colorIdx++;
+        }
+        const color = segmentColorMap.get(segmentLabel);
+        const feature = new ol.Feature({
+          geometry: new ol.geom.LineString(coords),
+          attr,
+          segmentLabel,
+          source: '',
+          target: '',
+          color
+        });
+        features.push(feature);
+      });
+
+      return { features, segmentColorMap };
+    }
+
+    function loadChannels(inputTxt, neighborTxt, gates, edges) {
+      channelSource.clear();
+      const { features, segmentColorMap } = loadChannelFeatures(inputTxt, neighborTxt, gates, edges);
+      channelSource.addFeatures(features);
+
+      // 渠道图例
+      channelLegendItemsEl.innerHTML = '';
+      segmentColorMap.forEach((color, segmentLabel) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:3px 0;';
+        row.innerHTML = '<span style="flex-shrink:0;width:20px;height:3px;border-radius:2px;background:' + color + ';display:inline-block;"></span>' +
+          '<span style="color:#587082;">' + segmentLabel + '</span>';
+        channelLegendItemsEl.appendChild(row);
+      });
+      channelLegendEl.style.display = segmentColorMap.size ? 'block' : 'none';
+
+      return features.length;
+    }
+    // ---------- 渠道解析 end ----------
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        const next = text[i + 1];
+        if (char === '"') {
+          if (inQuotes && next === '"') {
+            field += '"';
+            i += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+          continue;
+        }
+        if (!inQuotes && char === ',') {
+          row.push(field);
+          field = '';
+          continue;
+        }
+        if (!inQuotes && (char === '\n' || char === '\r')) {
+          if (char === '\r' && next === '\n') i += 1;
+          row.push(field);
+          field = '';
+          if (row.some(cell => String(cell || '').trim() !== '')) rows.push(row);
+          row = [];
+          continue;
+        }
+        field += char;
+      }
+      if (field.length || row.length) {
+        row.push(field);
+        if (row.some(cell => String(cell || '').trim() !== '')) rows.push(row);
+      }
+      return rows;
+    }
+
+    async function fetchText(path) {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(path + ' 加载失败: HTTP ' + response.status);
+      }
+      const buf = await response.arrayBuffer();
+      const candidates = [];
+      candidates.push(new TextDecoder('utf-8').decode(buf));
+      try { candidates.push(new TextDecoder('gbk').decode(buf)); } catch (e) {}
+      try { candidates.push(new TextDecoder('gb18030').decode(buf)); } catch (e) {}
+
+      function scoreDecodedText(s) {
+        const text = String(s || '');
+        const bad = (text.match(/�/g) || []).length;
+        const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+        const comma = (text.match(/,/g) || []).length;
+        // Fewer replacement chars is better; then prefer richer Chinese/comma structure.
+        return (-1000 * bad) + (2 * cjk) + comma;
+      }
+
+      let best = candidates[0] || '';
+      let bestScore = scoreDecodedText(best);
+      for (let i = 1; i < candidates.length; i += 1) {
+        const sc = scoreDecodedText(candidates[i]);
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = candidates[i];
+        }
+      }
+      return best;
+    }
+
+    function joinPath(basePath, childPath) {
+      const base = String(basePath || '').replace(/\\+/g, '/').replace(/\/+$/, '');
+      const child = String(childPath || '').replace(/\\+/g, '/').replace(/^\/+/, '');
+      if (!base) return child;
+      if (!child) return base;
+      return base + '/' + child;
+    }
+
+    function isAbsolutePath(path) {
+      const v = String(path || '').trim();
+      return /^(https?:)?\/\//i.test(v) || /^[a-zA-Z]:[\\/]/.test(v) || v.startsWith('/');
+    }
+
+    function resolveDataPath(pathValue) {
+      const raw = String(pathValue || '').trim();
+      if (!raw) return raw;
+      if (isAbsolutePath(raw)) return raw;
+      return joinPath(rootPathEl.value, raw);
+    }
+
+    async function fetchTextFirst(paths) {
+      let lastError = null;
+      for (let i = 0; i < paths.length; i += 1) {
+        const path = String(paths[i] || '').trim();
+        if (!path) continue;
+        try {
+          return await fetchText(path);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw (lastError || new Error('未找到可用数据文件'));
+    }
+
+    function formatTimeLabel(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return '-';
+      if (text.indexOf(' ') > -1) {
+        const parts = text.split(' ');
+        const date = parts[0] || '';
+        const hhmm = (parts[1] || '').slice(0, 5);
+        if (hhmm) return date.slice(5) + ' ' + hhmm;
+      }
+      return text.length > 12 ? text.slice(0, 12) : text;
+    }
+
+    function getLastFiniteValue(values) {
+      if (!Array.isArray(values)) return null;
+      for (let i = values.length - 1; i >= 0; i -= 1) {
+        if (Number.isFinite(values[i])) return values[i];
+      }
+      return null;
+    }
+
+    function buildPlotPoints(values, timeline) {
+      const x = [];
+      const y = [];
+      const timeLabels = [];
+      const series = Array.isArray(values) ? values : [];
+      const t = Array.isArray(timeline) ? timeline : [];
+      const n = series.length;
+      for (let i = 0; i < n; i += 1) {
+        const v = series[i];
+        if (!Number.isFinite(v)) continue;
+        y.push(v);
+        x.push(i + 1);
+        timeLabels.push(String(t[i] || ''));
+      }
+      return { x, y, timeLabels };
+    }
+
+    function toGateCardKey(name) {
+      return canonicalName(normalizeHeader(name));
+    }
+
+    function escapeHtmlAttr(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function setGateSegmentInfoButtonState() {
+      if (!gateSegmentInfoBtnEl) return;
+      gateSegmentInfoBtnEl.disabled = !String(selectedChannelLabel || '').trim();
+    }
+
+    function classifyDirectEdgeType(edgeType) {
+      const t = Number(edgeType);
+      if (t === 1) return '入流(type=1)';
+      if (t === 2) return '分水(type=2)';
+      if (t === 3) return '退水(type=3)';
+      if (t === 6) return '渗漏(type=6)';
+      if (t === 0 || t === 4) return '节制闸(type=' + t + ')';
+      if (Number.isFinite(t)) return '其他(type=' + t + ')';
+      return '未定义';
+    }
+
+    function getCurrentChannelSegmentInfo() {
+      const label = String(selectedChannelLabel || '').trim();
+      if (!label) return null;
+
+      const indirectRows = currentEdges.filter((edge) => {
+        if (!edge) return false;
+        if (String(edge.connectionType || '').trim() !== 'indirect') return false;
+        return buildEdgeSegmentLabel(edge) === label;
+      });
+      if (!indirectRows.length) return null;
+
+      const main = indirectRows[0];
+      const source = String(main.source || '').trim();
+      const target = String((isValidNodeName(main.target) ? main.target : main.end) || '').trim();
+      const canal = String(main.canal || '').trim();
+
+      const directRowsRaw = currentEdges.filter((edge) => {
+        if (!edge) return false;
+        if (String(edge.connectionType || '').trim() !== 'direct') return false;
+        const s = String(edge.source || '').trim();
+        const t = String(edge.target || '').trim();
+        const e = String(edge.end || '').trim();
+        const c = String(edge.canal || '').trim();
+        const inSameSegmentBySE = source && target && s === source && (e === target || t === target);
+        const inSameSegmentByEnd = target && e === target;
+        const inSameCanal = canal && c && c === canal && s === source;
+        return inSameSegmentBySE || inSameSegmentByEnd || inSameCanal;
+      });
+
+      const dedup = new Set();
+      const directRows = [];
+      directRowsRaw.forEach((edge) => {
+        const k = [edge.id, edge.source, edge.target, edge.end, edge.edgeType].map((v) => String(v || '')).join('|');
+        if (dedup.has(k)) return;
+        dedup.add(k);
+        directRows.push(edge);
+      });
+
+      return { label, source, target, canal, indirectRows, directRows };
+    }
+
+    function renderCurrentChannelSegmentInfo() {
+      if (!segmentInfoModalEl || !segmentInfoBodyEl) return;
+      const info = getCurrentChannelSegmentInfo();
+      if (!info) {
+        segmentInfoBodyEl.innerHTML = '<div class="chart-empty">请先在 GIS 中选中一个渠段，再查看渠段信息。</div>';
+      } else {
+        const indirectTableRows = info.indirectRows.map((edge) => {
+          return '<tr>' +
+            '<td>' + escapeHtmlAttr(edge.id) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.source) + '</td>' +
+            '<td>' + escapeHtmlAttr(isValidNodeName(edge.target) ? edge.target : edge.end) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.canal) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.connectionType) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        const directTableRows = info.directRows.map((edge) => {
+          const cls = classifyDirectEdgeType(edge.edgeType);
+          return '<tr>' +
+            '<td>' + escapeHtmlAttr(edge.id) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.source) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.target) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.end) + '</td>' +
+            '<td>' + escapeHtmlAttr(edge.canal) + '</td>' +
+            '<td>' + escapeHtmlAttr(String(edge.edgeType)) + '</td>' +
+            '<td>' + escapeHtmlAttr(cls) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        segmentInfoBodyEl.innerHTML = [
+          '<div class="segment-info-kv">',
+          '<strong>当前渠段:</strong> ' + escapeHtmlAttr(info.label) + '<br>',
+          '<strong>上游节制闸(source):</strong> ' + escapeHtmlAttr(info.source || '-') + '<br>',
+          '<strong>下游节制闸(target):</strong> ' + escapeHtmlAttr(info.target || '-') + '<br>',
+          '<strong>渠段(canal):</strong> ' + escapeHtmlAttr(info.canal || '-'),
+          '</div>',
+          '<div><strong>indirect 主边</strong></div>',
+          '<table class="segment-info-table"><thead><tr><th>id</th><th>source</th><th>target</th><th>canal</th><th>ConnectionType</th></tr></thead><tbody>' + (indirectTableRows || '<tr><td colspan="5">无</td></tr>') + '</tbody></table>',
+          '<div><strong>direct 内部边界（入流/出流等）</strong></div>',
+          '<table class="segment-info-table"><thead><tr><th>id</th><th>source</th><th>target</th><th>end</th><th>canal</th><th>type</th><th>类别</th></tr></thead><tbody>' + (directTableRows || '<tr><td colspan="7">无</td></tr>') + '</tbody></table>'
+        ].join('');
+      }
+      segmentInfoModalEl.classList.add('show');
+      segmentInfoModalEl.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideCurrentChannelSegmentInfo() {
+      if (!segmentInfoModalEl) return;
+      segmentInfoModalEl.classList.remove('show');
+      segmentInfoModalEl.setAttribute('aria-hidden', 'true');
+    }
+
+    function setActiveGateFlowCard(gateName) {
+      if (!gateChartListEl) return;
+      const key = toGateCardKey(gateName);
+      const cards = gateChartListEl.querySelectorAll('.detail-chart-card[data-gate-key]');
+      cards.forEach((card) => card.classList.remove('gate-active'));
+      if (!key) return;
+      const target = gateChartListEl.querySelector('.detail-chart-card[data-gate-key="' + key + '"]');
+      if (!target) return;
+      target.classList.add('gate-active');
+      try {
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      } catch (_) {}
+    }
+
+    function queuePlotlyChart(chartId, seriesList, timeline, yUnit) {
+      pendingPlotlyCharts.push({
+        id: chartId,
+        seriesList: Array.isArray(seriesList) ? seriesList : [],
+        timeline: Array.isArray(timeline) ? timeline : [],
+        yUnit: String(yUnit || '')
+      });
+    }
+
+    function renderPendingPlotlyCharts() {
+      if (!window.Plotly || !pendingPlotlyCharts.length) return;
+      const tasks = pendingPlotlyCharts.slice();
+      pendingPlotlyCharts = [];
+      tasks.forEach((task) => {
+        const host = document.getElementById(task.id);
+        if (!host) return;
+        const traces = [];
+        task.seriesList.forEach((series) => {
+          const points = buildPlotPoints(series.values, task.timeline);
+          if (!points.y.length) return;
+          const mode = String(series.mode || 'lines');
+          traces.push({
+            x: points.x,
+            y: points.y,
+            customdata: points.timeLabels,
+            type: 'scatter',
+            mode,
+            name: String(series.label || ''),
+            hovertemplate: '步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>',
+            line: {
+              color: String(series.color || '#0f766e'),
+              width: 2,
+              dash: String(series.dash || 'solid')
+            },
+            marker: {
+              color: String(series.markerColor || series.color || '#0f766e'),
+              size: Number(series.markerSize || 5)
+            }
+          });
+        });
+        if (!traces.length) {
+          host.innerHTML = '<div class="chart-empty">无数据</div>';
+          return;
+        }
+
+        const layout = {
+          margin: { l: 44, r: 12, t: 0, b: 28 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(15,118,110,0.04)',
+          showlegend: true,
+          legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 10 } },
+          xaxis: {
+            title: { text: '时间步序号', standoff: 2, font: { size: 10 } },
+            tickfont: { size: 10, color: '#64748b' },
+            showgrid: true,
+            gridcolor: 'rgba(148,163,184,0.18)',
+            zeroline: false,
+            automargin: true
+          },
+          yaxis: {
+            title: { text: task.yUnit, standoff: 4, font: { size: 10 } },
+            tickfont: { size: 10, color: '#64748b' },
+            showgrid: true,
+            gridcolor: 'rgba(148,163,184,0.22)',
+            zeroline: false,
+            nticks: 5,
+            automargin: true
+          }
+        };
+
+        Plotly.newPlot(host, traces, layout, {
+          displayModeBar: false,
+          responsive: true,
+          staticPlot: false,
+          locale: 'zh-CN'
+        });
+      });
+    }
+
+    function resetPendingPlotlyCharts() {
+      pendingPlotlyCharts = [];
+      plotlyChartSeq = 0;
+    }
+
+    function applyChartListFillMode(listEl, cardCount) {
+      if (!listEl) return;
+      const count = Number(cardCount) || 0;
+      const shouldFill = count > 0 && count <= 3;
+      if (!shouldFill) {
+        listEl.classList.remove('fill-cards');
+        listEl.style.gridTemplateRows = '';
+        return;
+      }
+      listEl.classList.add('fill-cards');
+      listEl.style.gridTemplateRows = 'repeat(' + count + ', minmax(0, 1fr))';
+    }
+
+    function buildChartCardHtml(title, values, subtitle, options) {
+      const opts = options || {};
+      const cardKey = toGateCardKey(opts.cardKey || subtitle || title);
+      const cardKeyAttr = cardKey ? (' data-gate-key="' + escapeHtmlAttr(cardKey) + '"') : '';
+      const yUnit = String(opts.yUnit || '');
+      const obsValues = Array.isArray(opts.obsValues) ? opts.obsValues : [];
+      const showTimelineInfo = !!opts.showTimelineInfo;
+      const headerMeta = String(opts.headerMeta || '').trim();
+      const finiteValues = values.filter((value) => Number.isFinite(value));
+      const obsFinite = obsValues.filter((value) => Number.isFinite(value));
+      const lastValue = getLastFiniteValue(values);
+      const minValue = finiteValues.length ? Math.min.apply(null, finiteValues) : null;
+      const maxValue = finiteValues.length ? Math.max.apply(null, finiteValues) : null;
+      const obsLastValue = getLastFiniteValue(obsValues);
+      const chartId = 'plotly-chart-' + (++plotlyChartSeq);
+      const seriesList = [
+        { label: '模拟', values: values, color: '#0f766e', dash: 'solid' }
+      ];
+      if (obsFinite.length) {
+        seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+      }
+      queuePlotlyChart(chartId, seriesList, opts.timeline, yUnit);
+      return [
+        '<div class="detail-chart-card"' + cardKeyAttr + '>',
+        '<div class="detail-chart-head"><p class="detail-chart-title">' + title + (subtitle ? '（' + subtitle + '）' : '') + '</p>' + (headerMeta ? ('<span class="detail-chart-title-meta">' + headerMeta + '</span>') : '') + '</div>',
+        (showTimelineInfo ? buildTimelineInfoHtml(opts.timeline) : ''),
+        '<div id="' + chartId + '" class="detail-chart-plot"></div>',
+        (!headerMeta ? '<div class="detail-chart-meta"><span>min=' + (minValue == null ? '-' : minValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span><span>max=' + (maxValue == null ? '-' : maxValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
+        (!headerMeta ? '<div class="detail-chart-meta"><span>点数=' + finiteValues.length + '</span><span>末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
+        (!headerMeta && obsFinite.length ? '<div class="detail-chart-meta"><span>实测点数=' + obsFinite.length + '</span><span>实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
+        '</div>'
+      ].join('');
+    }
+
+    function buildFlowBreakdownRows(items, kindLabel) {
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) return '<div class="flow-breakdown-empty">' + kindLabel + '：无</div>';
+      const rows = list.map((item) => {
+        const name = String(item && item.name || '');
+        const values = item && item.values;
+        const last = getLastFiniteValue(Array.isArray(values) ? values : []);
+        return '<tr><td>' + name + '</td><td>' + (last == null ? '-' : last.toFixed(3)) + '</td></tr>';
+      }).join('');
+      return [
+        '<table class="flow-breakdown-table">',
+        '<thead><tr><th>' + kindLabel + '组成</th><th>末值</th></tr></thead>',
+        '<tbody>',
+        rows,
+        '</tbody>',
+        '</table>'
+      ].join('');
+    }
+
+    function buildFlowBreakdownTableHtml(inflowItems, outflowItems) {
+      return [
+        '<details class="flow-breakdown">',
+        '<summary>查看合计明细（可折叠）</summary>',
+        '<div class="flow-breakdown-content">',
+        buildFlowBreakdownRows(inflowItems, '入流'),
+        buildFlowBreakdownRows(outflowItems, '出流'),
+        '</div>',
+        '</details>'
+      ].join('');
+    }
+
+    function buildCombinedFlowSummaryCard(gateName, inflowValues, outflowValues, totalValues, timeline, inflowItems, outflowItems) {
+      const inLast = getLastFiniteValue(inflowValues);
+      const outLast = getLastFiniteValue(outflowValues);
+      const totalLast = getLastFiniteValue(totalValues);
+      const chartId = 'plotly-chart-' + (++plotlyChartSeq);
+      queuePlotlyChart(chartId, [
+        { label: '入流', values: inflowValues, color: '#2563eb', dash: 'solid' },
+        { label: '出流', values: outflowValues, color: '#dc2626', dash: 'solid' },
+        { label: '总计', values: totalValues, color: '#16a34a', dash: 'solid' }
+      ], timeline, 'm^3/s');
+      const headMeta = '入流末值=' + (inLast == null ? '-' : inLast.toFixed(3)) + ' | 出流末值=' + (outLast == null ? '-' : outLast.toFixed(3)) + ' | 总计末值=' + (totalLast == null ? '-' : totalLast.toFixed(3));
+      return [
+        '<div class="detail-chart-card">',
+        '<div class="detail-chart-head"><p class="detail-chart-title">合计曲线（入流-出流）</p><span class="detail-chart-title-meta">' + headMeta + '</span></div>',
+        '<div id="' + chartId + '" class="detail-chart-plot"></div>',
+        buildFlowBreakdownTableHtml(inflowItems, outflowItems),
+        '</div>'
+      ].join('');
+    }
+
+    function normalizeHeader(value) {
+      return String(value || '').replace(/^\uFEFF/, '').replace(/\u00A0/g, ' ').trim();
+    }
+
+    function normalizeTimeKey(value) {
+      const raw = normalizeHeader(value);
+      if (!raw) return '';
+      const text = raw.replace(/\//g, '-').replace('T', ' ').replace(/\s+/g, ' ').trim();
+      const m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?$/);
+      if (!m) return text;
+      const yyyy = m[1];
+      const mm = String(Number(m[2] || 1)).padStart(2, '0');
+      const dd = String(Number(m[3] || 1)).padStart(2, '0');
+      const hh = String(Number(m[4] || 0)).padStart(2, '0');
+      const mi = String(Number(m[5] || 0)).padStart(2, '0');
+      return yyyy + '-' + mm + '-' + dd + ' ' + hh + ':' + mi;
+    }
+
+    function canonicalName(value) {
+      return normalizeHeader(value).replace(/[\s\t\r\n]/g, '');
+    }
+
+    function getObsSeriesForName(name) {
+      const key = normalizeHeader(name);
+      const aligned = currentObsAlignedByFlow.get(key);
+      if (aligned && aligned.length) return aligned;
+      const direct = currentObsMap.byName.get(key);
+      if (direct && direct.length) return direct;
+      const canon = currentObsCanonical.get(canonicalName(key));
+      if (canon && canon.length) return canon;
+      return [];
+    }
+
+    function getFlowSeriesForName(name) {
+      const key = normalizeHeader(name);
+      const flowTimeline = Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [];
+      const direct = currentFlowMap.byName.get(key);
+      if (direct && direct.length) {
+        if (flowTimeline.length) return alignSeriesByTimeline(flowTimeline, currentFlowMap.timeline, direct);
+        return direct;
+      }
+
+      const flowCanon = currentFlowCanonical.get(canonicalName(key));
+      if (flowCanon && flowCanon.length) {
+        if (flowTimeline.length) return alignSeriesByTimeline(flowTimeline, currentFlowMap.timeline, flowCanon);
+        return flowCanon;
+      }
+
+      const internalDirect = currentInternalFlowMap.byName.get(key);
+      if (internalDirect && internalDirect.length) {
+        if (flowTimeline.length) {
+          return alignSeriesByTimeline(flowTimeline, currentInternalFlowMap.timeline, internalDirect);
+        }
+        return internalDirect;
+      }
+
+      const internalCanon = currentInternalFlowCanonical.get(canonicalName(key));
+      if (internalCanon && internalCanon.length) {
+        if (flowTimeline.length) {
+          return alignSeriesByTimeline(flowTimeline, currentInternalFlowMap.timeline, internalCanon);
+        }
+        return internalCanon;
+      }
+
+      return [];
+    }
+
+    function getSimFlowSeriesForName(name) {
+      const key = normalizeHeader(name);
+      const flowTimeline = Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [];
+      const direct = currentFlowMap.byName.get(key);
+      if (direct && direct.length) {
+        if (flowTimeline.length) return alignSeriesByTimeline(flowTimeline, currentFlowMap.timeline, direct);
+        return direct;
+      }
+      const canon = currentFlowCanonical.get(canonicalName(key));
+      if (canon && canon.length) {
+        if (flowTimeline.length) return alignSeriesByTimeline(flowTimeline, currentFlowMap.timeline, canon);
+        return canon;
+      }
+      return [];
+    }
+
+    function hasAnyFlowSeries(name) {
+      const values = getFlowSeriesForName(name);
+      if (Array.isArray(values) && values.length) {
+        for (let i = 0; i < values.length; i += 1) {
+          if (Number.isFinite(values[i])) return true;
+        }
+      }
+      return false;
+    }
+
+    function getStageObsSeriesForName(name) {
+      const key = normalizeHeader(name);
+      const aligned = currentStageObsAlignedByStage.get(key);
+      if (aligned && aligned.length) return aligned;
+      const direct = currentStageObsMap.byName.get(key);
+      if (direct && direct.length) return direct;
+      const canon = currentStageObsCanonical.get(canonicalName(key));
+      if (canon && canon.length) return canon;
+      return [];
+    }
+
+    function loadGateRows(csvText) {
+      const rows = parseCsv(csvText);
+      if (rows.length < 2) return [];
+      const headers = rows[0].map(normalizeHeader);
+      const idIndex = headers.indexOf('id');
+      const xIndex = headers.indexOf('x');
+      const yIndex = headers.indexOf('y');
+      const zIndex = headers.indexOf('z');
+      const typeIndex = headers.indexOf('type');
+      const nameIndex = headers.indexOf('gate_name');
+      return rows.slice(1).map((cells) => {
+        const x = Number(cells[xIndex]);
+        const y = Number(cells[yIndex]);
+        const z = Number(cells[zIndex]);
+        return {
+          id: String(cells[idIndex] || '').trim(),
+          name: String(cells[nameIndex] || '').trim(),
+          x,
+          y,
+          z,
+          type: String(cells[typeIndex] || '').trim()
+        };
+      }).filter((item) => item.name && Number.isFinite(item.x) && Number.isFinite(item.y));
+    }
+
+    function loadSeriesMap(csvText) {
+      const rows = parseCsv(csvText);
+      if (rows.length < 2) return { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const headers = rows[0].map(normalizeHeader).filter((_, index) => index < rows[0].length - 1 || normalizeHeader(rows[0][index]));
+      let timeIndex = headers.findIndex((value) => value === 'point/time' || value === 'tm' || value === 'time');
+      if (timeIndex < 0) timeIndex = 0;
+      const timeline = [];
+      const byName = new Map();
+      const seriesHeaders = [];
+      headers.forEach((header, index) => {
+        if (!header || index === timeIndex) return;
+        byName.set(header, []);
+        seriesHeaders.push(header);
+      });
+      rows.slice(1).forEach((cells) => {
+        const timeValue = normalizeTimeKey(cells[timeIndex]);
+        if (!timeValue) return;
+        timeline.push(timeValue);
+        headers.forEach((header, index) => {
+          if (!header || index === timeIndex) return;
+          const series = byName.get(header);
+          const value = Number(cells[index]);
+          if (series) series.push(Number.isFinite(value) ? value : NaN);
+        });
+      });
+      return { timeline, byName, seriesHeaders };
+    }
+
+    function alignSeriesByTimeline(baseTimeline, sourceTimeline, sourceValues) {
+      const base = Array.isArray(baseTimeline) ? baseTimeline : [];
+      const srcTimeline = Array.isArray(sourceTimeline) ? sourceTimeline : [];
+      const srcValues = Array.isArray(sourceValues) ? sourceValues : [];
+      if (!base.length) return [];
+      const timeToValue = new Map();
+      const n = Math.min(srcTimeline.length, srcValues.length);
+      for (let i = 0; i < n; i += 1) {
+        const tm = normalizeTimeKey(srcTimeline[i]);
+        if (!tm) continue;
+        const v = srcValues[i];
+        if (!Number.isFinite(v)) continue;
+        if (!timeToValue.has(tm)) timeToValue.set(tm, v);
+      }
+      return base.map((tm) => {
+        const key = normalizeTimeKey(tm);
+        return timeToValue.has(key) ? timeToValue.get(key) : NaN;
+      });
+    }
+
+    function loadTdSeriesMap(csvText) {
+      const rows = parseCsv(csvText);
+      if (rows.length < 2) return { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const headers = rows[0].map(normalizeHeader);
+      const timeIndex = headers.findIndex((value) => value === 'tm' || value === 'time' || value === 'point/time');
+      const objIndex = headers.findIndex((value) => value === 'obj' || value === 'name');
+      const valueIndex = headers.findIndex((value) => value === 'value');
+      if (timeIndex < 0 || objIndex < 0 || valueIndex < 0) {
+        return loadSeriesMap(csvText);
+      }
+
+      const timeline = [];
+      const timeToIndex = new Map();
+      const byName = new Map();
+      const seriesHeaders = [];
+
+      rows.slice(1).forEach((cells) => {
+        const t = normalizeTimeKey(cells[timeIndex]);
+        const obj = normalizeHeader(cells[objIndex]);
+        const value = Number(cells[valueIndex]);
+        if (!t || !obj || !Number.isFinite(value)) return;
+
+        if (!timeToIndex.has(t)) {
+          timeToIndex.set(t, timeline.length);
+          timeline.push(t);
+          byName.forEach((arr) => arr.push(NaN));
+        }
+        if (!byName.has(obj)) {
+          byName.set(obj, new Array(timeline.length).fill(NaN));
+          seriesHeaders.push(obj);
+        }
+        const idx = timeToIndex.get(t);
+        byName.get(obj)[idx] = value;
+      });
+
+      return { timeline, byName, seriesHeaders };
+    }
+
+    function buildObsAlignedMap(obsMap, flowMap) {
+      const aligned = new Map();
+      const obsHeaders = Array.isArray(obsMap.seriesHeaders) ? obsMap.seriesHeaders : [];
+      const flowHeaders = Array.isArray(flowMap.seriesHeaders) ? flowMap.seriesHeaders : [];
+      const baseTimeline = Array.isArray(flowMap.timeline) ? flowMap.timeline : [];
+      const obsByCanon = new Map();
+      obsHeaders.forEach((name) => {
+        const canon = canonicalName(name);
+        if (canon && !obsByCanon.has(canon)) obsByCanon.set(canon, name);
+      });
+      flowHeaders.forEach((flowName, idx) => {
+        if (!flowName) return;
+        const byName = obsMap.byName.get(flowName);
+        let obsName = byName ? flowName : '';
+        if (!obsName) {
+          const canon = canonicalName(flowName);
+          if (canon && obsByCanon.has(canon)) obsName = obsByCanon.get(canon);
+        }
+        if (!obsName && idx < obsHeaders.length) obsName = obsHeaders[idx];
+        if (!obsName) return;
+        const values = obsMap.byName.get(obsName);
+        if (!values || !values.length) return;
+        const alignedValues = alignSeriesByTimeline(baseTimeline, obsMap.timeline, values);
+        aligned.set(flowName, alignedValues);
+      });
+      return aligned;
+    }
+
+    function buildGateTypeMapFromEdges(edges) {
+      const gateTypeMap = new Map();
+      const edgeList = Array.isArray(edges) ? edges : [];
+      edgeList.forEach((edge) => {
+        if (!edge) return;
+        const rawType = edge.edgeType;
+        const edgeType = Number(rawType);
+        if (!Number.isFinite(edgeType)) return;
+        const names = [edge.source, edge.target, edge.end]
+          .map((value) => String(value || '').trim())
+          .filter((name) => isValidNodeName(name));
+        names.forEach((name) => {
+          if (!gateTypeMap.has(name)) {
+            gateTypeMap.set(name, edgeType);
+          }
+        });
+      });
+      return gateTypeMap;
+    }
+
+    function findFirstGateByType(gates, typeValue) {
+      const gateList = Array.isArray(gates) ? gates : [];
+      const expect = Number(typeValue);
+      if (!Number.isFinite(expect)) return '';
+      for (let i = 0; i < gateList.length; i += 1) {
+        const gateName = String(gateList[i] && gateList[i].name || '').trim();
+        if (!gateName) continue;
+        const gateType = Number(currentGateTypeByName.get(gateName));
+        if (Number.isFinite(gateType) && gateType === expect) return gateName;
+      }
+      return '';
+    }
+
+    function loadEdges(csvText) {
+      const rows = parseCsv(csvText);
+      if (rows.length < 2) return [];
+      const headers = rows[0].map(normalizeHeader);
+      const sourceIndex = headers.indexOf('source');
+      const targetIndex = headers.indexOf('target');
+      const endIndex = headers.indexOf('end');
+      const typeIndex = headers.indexOf('ConnectionType');
+      const edgeTypeIndex = headers.indexOf('type');
+      const canalIndex = headers.indexOf('canal');
+      const idIndex = headers.indexOf('id');
+      const gateBottomIndex = headers.indexOf('gate_bottom_elevation');
+      return rows.slice(1).map((cells) => {
+        const source = String(cells[sourceIndex] || '').trim();
+        const target = String(cells[targetIndex] || '').trim();
+        const end = String(cells[endIndex] || '').trim();
+        const connectionType = String(cells[typeIndex] || '').trim();
+        const canal = String(cells[canalIndex] || '').trim();
+        const id = String(cells[idIndex] || '').trim();
+        const edgeType = Number(cells[edgeTypeIndex]);
+        const gateBottomElevation = Number(cells[gateBottomIndex]);
+        return { source, target, end, connectionType, canal, id, edgeType, gateBottomElevation };
+      }).filter((row) => row.source || row.target || row.end);
+    }
+
+    function isValidNodeName(name) {
+      return !!name && name !== '-1';
+    }
+
+    function addSeries(sumArr, values) {
+      if (!sumArr || !values || !values.length) return;
+      const len = Math.min(sumArr.length, values.length);
+      for (let i = 0; i < len; i += 1) {
+        sumArr[i] += Number.isFinite(values[i]) ? values[i] : 0;
+      }
+    }
+
+    function renderSelectionCharts(gateName) {
+      selectedGateName = gateName;
+      gateLayer.changed();
+      resetPendingPlotlyCharts();
+      setChannelPaneMeta(currentStageMap.timeline);
+      setGatePaneMeta(currentFlowMap.timeline);
+      const relatedEdges = currentEdges.filter((edge) =>
+        edge.source === gateName || edge.target === gateName || edge.end === gateName
+      );
+
+      const targetSet = new Set();
+      relatedEdges.forEach((edge) => {
+        if (isValidNodeName(edge.target)) targetSet.add(edge.target);
+      });
+
+      const inflowNodes = new Set();
+      const outflowNodes = new Set();
+      const segmentInfo = getCurrentChannelSegmentInfo();
+      const segmentMode = !!(segmentInfo && canonicalName(segmentInfo.source) === canonicalName(gateName));
+
+      if (segmentMode) {
+        // 渠段模式严格口径：
+        // 入流 = 上游节制闸 + direct(type=1/5)
+        // 出流 = 下游节制闸 + direct(type=2/6)
+        if (isValidNodeName(segmentInfo.target)) outflowNodes.add(segmentInfo.target);
+        (Array.isArray(segmentInfo.directRows) ? segmentInfo.directRows : []).forEach((edge) => {
+          const targetName = isValidNodeName(edge.target) ? edge.target : '';
+          if (!targetName) return;
+          const edgeType = Number(edge.edgeType);
+          if (edgeType === 1 || edgeType === 5) {
+            inflowNodes.add(targetName);
+          } else if (edgeType === 2 || edgeType === 6) {
+            outflowNodes.add(targetName);
+          }
+        });
+      } else {
+        // 非渠段模式沿用既有分类规则。
+        relatedEdges.forEach((edge) => {
+          if (edge.target === gateName) {
+            if (isValidNodeName(edge.source)) inflowNodes.add(edge.source);
+          }
+          if (edge.source === gateName) {
+            const targetName = isValidNodeName(edge.target) ? edge.target : '';
+            const endName = isValidNodeName(edge.end) ? edge.end : '';
+            const isDirect = String(edge.connectionType || '').trim() === 'direct';
+            const edgeType = Number(edge.edgeType);
+
+            if (targetName) {
+              if (isDirect) {
+                if (edgeType === 1 || edgeType === 5) {
+                  inflowNodes.add(targetName);
+                } else if (edgeType === 2 || edgeType === 6) {
+                  outflowNodes.add(targetName);
+                } else {
+                  outflowNodes.add(targetName);
+                }
+              } else {
+                outflowNodes.add(targetName);
+              }
+            }
+
+            if (endName) {
+              outflowNodes.add(endName);
+            }
+          }
+        });
+      }
+
+      const relatedFlowNodes = new Set([gateName]);
+      inflowNodes.forEach((name) => relatedFlowNodes.add(name));
+      outflowNodes.forEach((name) => relatedFlowNodes.add(name));
+
+      gateChartListEl.innerHTML = '';
+      channelChartListEl.innerHTML = '';
+
+      const targetNames = Array.from(targetSet);
+      const channelCards = [];
+      // 展示当前 source 的闸前水位(H1)及实测水位。
+      const sourceStageValues = currentStageMap.byName.get(gateName) || [];
+      if (sourceStageValues.length) {
+        const sourceStageObsValues = getStageObsSeriesForName(gateName);
+        const sourceLastValue = getLastFiniteValue(sourceStageValues);
+        const sourceObsLastValue = getLastFiniteValue(sourceStageObsValues);
+        const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
+          (sourceStageObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
+        channelCards.push(buildChartCardHtml(gateName, sourceStageValues, 'source 闸前水位', {
+          timeline: currentStageMap.timeline,
+          yUnit: 'm',
+          obsValues: sourceStageObsValues,
+          showTimelineInfo: false,
+          headerMeta: sourceMeta
+        }));
+      }
+      // 展示当前 source 的下游水深(H2)过程线。
+      const sourceH2Values = getStageSeriesByName(currentStageH2Map, gateName);
+      if (sourceH2Values.length) {
+        const h2Last = getLastFiniteValue(sourceH2Values);
+        const h2Meta = '末值=' + (h2Last == null ? '-' : h2Last.toFixed(3)) + ' m';
+        channelCards.push(buildChartCardHtml(gateName, sourceH2Values, 'source 下游水深(H2)', {
+          timeline: currentStageH2Map.timeline,
+          yUnit: 'm',
+          showTimelineInfo: false,
+          headerMeta: h2Meta
+        }));
+      }
+      for (let i = 0; i < targetNames.length; i += 1) {
+        const targetName = targetNames[i];
+        const stageValues = currentStageMap.byName.get(targetName) || [];
+        if (!stageValues.length) continue;
+        const stageObsValues = getStageObsSeriesForName(targetName);
+        const lastValue = getLastFiniteValue(stageValues);
+        const obsLastValue = getLastFiniteValue(stageObsValues);
+        const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
+          (stageObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
+        channelCards.push(buildChartCardHtml(targetName, stageValues, 'target 闸前水位', {
+          timeline: currentStageMap.timeline,
+          yUnit: 'm',
+          obsValues: stageObsValues,
+          showTimelineInfo: false,
+          headerMeta: headerMeta
+        }));
+      }
+      if (!channelCards.length) {
+        channelChartListEl.innerHTML = '<div class="chart-empty">未找到该闸门关联边的 target 闸前水位数据。</div>';
+        applyChartListFillMode(channelChartListEl, 0);
+      } else {
+        channelChartListEl.innerHTML = channelCards.join('');
+        applyChartListFillMode(channelChartListEl, channelCards.length);
+      }
+
+      const flowTimelineLen = currentFlowMap.timeline.length;
+      const inflowSum = new Array(flowTimelineLen).fill(0);
+      const outflowSum = new Array(flowTimelineLen).fill(0);
+      const inflowItems = [];
+      const outflowItems = [];
+      const flowCards = [];
+      const relatedFlowCards = [];
+      const relatedFlowNameSet = new Set(Array.from(relatedFlowNodes).filter((name) => name !== gateName));
+      // dN 边界列通常不在 edges 节点名中；若存在 inflowN/leakageN，则补充展示对应 dN。
+      Array.from(relatedFlowNameSet).forEach((name) => {
+        const m = String(name || '').trim().match(/^(?:inflow|leakage)(\d+)$/i);
+        if (!m) return;
+        const boundaryName = 'd' + m[1];
+        if (hasAnyFlowSeries(boundaryName)) relatedFlowNameSet.add(boundaryName);
+      });
+      const relatedFlowNames = Array.from(relatedFlowNameSet);
+      relatedFlowNames.sort((a, b) => {
+        const inA = currentGatesIniNameSet.has(canonicalName(a)) ? 1 : 0;
+        const inB = currentGatesIniNameSet.has(canonicalName(b)) ? 1 : 0;
+        if (inA !== inB) return inB - inA;
+        return String(a || '').localeCompare(String(b || ''), 'zh-CN');
+      });
+
+      relatedFlowNames.forEach((name) => {
+        if (name === gateName) return;
+        const values = getFlowSeriesForName(name);
+        const isInGatesIni = currentGatesIniNameSet.has(canonicalName(name));
+        if (!values.length && !isInGatesIni) return;
+
+        const obsValues = getObsSeriesForName(name);
+        const lastValue = getLastFiniteValue(values);
+        const obsLastValue = getLastFiniteValue(obsValues);
+        const role = inflowNodes.has(name)
+          ? '入流关联闸门'
+          : (outflowNodes.has(name) ? '出流关联闸门' : '关联闸门');
+        const tag = isInGatesIni ? '' : ' [非Gates.ini]';
+        const headerMeta = role + ' | 末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
+          (obsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+        relatedFlowCards.push(buildChartCardHtml('关联闸门流量', values, name + tag, {
+          timeline: currentFlowMap.timeline,
+          yUnit: 'm^3/s',
+          obsValues: obsValues,
+          showTimelineInfo: false,
+          headerMeta: headerMeta
+        }));
+
+        const simValues = getSimFlowSeriesForName(name);
+        if (inflowNodes.has(name)) {
+          if (simValues.length) {
+            addSeries(inflowSum, simValues);
+            inflowItems.push({ name: name, values: simValues });
+          }
+        } else if (outflowNodes.has(name)) {
+          if (simValues.length) {
+            addSeries(outflowSum, simValues);
+            outflowItems.push({ name: name, values: simValues });
+          }
+        }
+      });
+
+      const currentGateValues = getFlowSeriesForName(gateName);
+      const currentGateSimValues = getSimFlowSeriesForName(gateName);
+      if (currentGateValues.length) {
+        const currentObsValues = getObsSeriesForName(gateName);
+        const lastValue = getLastFiniteValue(currentGateValues);
+        const obsLastValue = getLastFiniteValue(currentObsValues);
+        const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
+          (currentObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+        flowCards.push(buildChartCardHtml('当前闸门流量', currentGateValues, gateName, {
+          timeline: currentFlowMap.timeline,
+          yUnit: 'm^3/s',
+          obsValues: currentObsValues,
+          showTimelineInfo: false,
+          headerMeta: headerMeta,
+          cardKey: gateName
+        }));
+
+        // 合计曲线严格使用模拟结果：当前闸门主入流 + 其他模拟入/出流。
+        if (currentGateSimValues.length) {
+          addSeries(inflowSum, currentGateSimValues);
+          inflowItems.unshift({ name: gateName + '(当前闸门,模拟)', values: currentGateSimValues });
+        }
+      }
+
+      const hasInflow = inflowSum.some((value) => Math.abs(value) > 1e-12);
+      const hasOutflow = outflowSum.some((value) => Math.abs(value) > 1e-12);
+      if (hasInflow || hasOutflow) {
+        const totalSum = inflowSum.map((value, index) => (value || 0) - (outflowSum[index] || 0));
+        flowCards.push(buildCombinedFlowSummaryCard(gateName, inflowSum, outflowSum, totalSum, currentFlowMap.timeline, inflowItems, outflowItems));
+      }
+
+      // 保持当前已有图在最上侧，再追加各关联闸门过程线。
+      if (relatedFlowCards.length) {
+        flowCards.push.apply(flowCards, relatedFlowCards);
+      }
+
+      if (!flowCards.length) {
+        gateChartListEl.innerHTML = '<div class="chart-empty">未找到当前闸门流量数据。</div>';
+        applyChartListFillMode(gateChartListEl, 0);
+      } else {
+        gateChartListEl.innerHTML = flowCards.join('');
+        applyChartListFillMode(gateChartListEl, flowCards.length);
+      }
+
+      renderPendingPlotlyCharts();
+      setActiveGateFlowCard(gateName);
+
+      gateChartListEl.parentElement.scrollTop = 0;
+      channelChartListEl.parentElement.scrollTop = 0;
+    }
+
+    function renderGates(gates, stageMap) {
+      gateSource.clear();
+      const extent = ol.extent.createEmpty();
+      let matched = 0;
+      gateByName = new Map();
+      gates.forEach((gate) => {
+        const feature = new ol.Feature({
+          geometry: new ol.geom.Point([gate.x, gate.y]),
+          name: gate.name,
+          gateId: gate.id
+        });
+        gateSource.addFeature(feature);
+        ol.extent.extend(extent, feature.getGeometry().getExtent());
+        gateByName.set(gate.name, gate);
+
+        const seriesValues = stageMap.byName.get(gate.name);
+        if (!seriesValues || !seriesValues.length) return;
+        matched += 1;
+      });
+      if (!ol.extent.isEmpty(extent)) {
+        map.getView().fit(extent, { padding: [40, 210, 40, 40], duration: 0, maxZoom: 12 });
+      }
+
+      return matched;
+    }
+
+    async function reload() {
+      statsEl.textContent = '正在加载渠道与曲线数据...';
+      const edgePath = edgesPathEl.value.trim();
+      const edgeCandidates = [
+        resolveDataPath(edgePath),
+        resolveDataPath('mesh/edges_new.csv'),
+        resolveDataPath('mesh/edges_utf8.csv'),
+        resolveDataPath('mesh/edges.csv')
+      ];
+      const [inputTxt, neighborTxt, gateCsv, gatesIniTxt, stageCsv, stageH2Csv, stageObsCsv, flowCsv, obsCsv, edgesCsv, stakeJson] = await Promise.all([
+        fetchText(resolveDataPath(inputPathEl.value.trim())),
+        fetchText(resolveDataPath(neighborPathEl.value.trim())),
+        fetchText(resolveDataPath(gatesPathEl.value.trim())),
+        fetchText(resolveDataPath('mesh/Gates.ini')).catch(() => ''),
+        fetchText(resolveDataPath(seriesPathEl.value.trim())),
+        fetchText(resolveDataPath('output/channel_Gates_Stastic_h2.csv')).catch(() => ''),
+        fetchText(resolveDataPath(stageObsPathEl.value.trim())).catch(() => ''),
+        fetchText(resolveDataPath(flowPathEl.value.trim())),
+        fetchText(resolveDataPath(obsPathEl.value.trim())).catch(() => ''),
+        fetchTextFirst(edgeCandidates),
+        fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
+      ]);
+      const gatesFromCsv = loadGateRows(gateCsv);
+      const gatesFromIni = buildGatesFromIniAndInput(gatesIniTxt, inputTxt);
+      const gatesIniItems = parseGatesIni(gatesIniTxt);
+      currentGatesIniNameSet = new Set(
+        gatesIniItems
+          .map((item) => canonicalName(item && item.name))
+          .filter(Boolean)
+      );
+      const gateMeshMatched = isGateMeshOneToOne(gatesFromCsv, gatesFromIni);
+      const gates = gateMeshMatched ? gatesFromCsv : (gatesFromIni.length ? gatesFromIni : gatesFromCsv);
+      const stageMap = loadSeriesMap(stageCsv);
+      const stageH2Map = stageH2Csv ? loadSeriesMap(stageH2Csv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const stageObsMap = stageObsCsv ? loadTdSeriesMap(stageObsCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const flowMap = loadSeriesMap(flowCsv);
+      const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
+      const internalFlowMap = internalFlowCsv ? loadSeriesMap(internalFlowCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const obsMap = obsCsv ? loadSeriesMap(obsCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const edges = loadEdges(edgesCsv);
+      let stakeMap = {};
+      try {
+        stakeMap = JSON.parse(String(stakeJson || '{}'));
+      } catch (_) {
+        stakeMap = {};
+      }
+      currentStakeMap = stakeMap;
+      const channelCount = loadChannels(inputTxt, neighborTxt, gates, edges);
+      renderDynamicWaterline(stageMap, edges, gates, flowMap, currentStakeMap);
+      currentGateRows = gates;
+      currentStageMap = stageMap;
+      currentStageH2Map = stageH2Map;
+      currentStageObsMap = stageObsMap;
+      currentStageObsAlignedByStage = buildObsAlignedMap(stageObsMap, stageMap);
+      currentStageObsCanonical = new Map();
+      currentStageObsMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentStageObsCanonical.set(canonicalName(key), values);
+      });
+      currentFlowMap = flowMap;
+      currentInternalFlowMap = internalFlowMap;
+      currentFlowCanonical = new Map();
+      currentFlowMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentFlowCanonical.set(canonicalName(key), values);
+      });
+      currentInternalFlowCanonical = new Map();
+      currentInternalFlowMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentInternalFlowCanonical.set(canonicalName(key), values);
+      });
+      setChannelPaneMeta(stageMap.timeline);
+      setGatePaneMeta(flowMap.timeline);
+      currentObsMap = obsMap;
+      currentObsAlignedByFlow = buildObsAlignedMap(obsMap, flowMap);
+      currentObsCanonical = new Map();
+      currentObsMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentObsCanonical.set(canonicalName(key), values);
+      });
+      currentEdges = edges;
+      currentGateTypeByName = buildGateTypeMapFromEdges(edges);
+      const matchedGates = renderGates(gates, stageMap);
+      selectedGateName = '';
+      selectedChannelLabel = '';
+      channelLayer.changed();
+      gateLayer.changed();
+      setGateSegmentInfoButtonState();
+      hideCurrentChannelSegmentInfo();
+      channelChartListEl.innerHTML = '<div class="chart-empty">点击上方 GIS 图中的闸门点位后，这里显示对应边 target 的闸前水位图表。</div>';
+      gateChartListEl.innerHTML = '<div class="chart-empty">点击上方 GIS 图中的闸门点位后，这里显示该边相关闸门的流量过程线及入流/出流求和图表。</div>';
+      applyChartListFillMode(channelChartListEl, 0);
+      applyChartListFillMode(gateChartListEl, 0);
+
+      // 初始化页面后，自动选中 edges.csv 中 type=0 的闸门进行展示。
+      const firstTypeZeroGate = findFirstGateByType(gates, 0);
+      if (firstTypeZeroGate) {
+        renderSelectionCharts(firstTypeZeroGate);
+      }
+
+      statsEl.textContent = [
+        '渠道线条数: ' + channelCount,
+        '闸门总数: ' + gates.length,
+        '闸门映射校验: ' + (gateMeshMatched ? 'gates_mesh.csv 与 Gates.ini 一一对应' : '不对应，已按 Gates.ini + input.txt 自动更新(内存)后绘图'),
+        '匹配到曲线的闸门: ' + matchedGates,
+        '水位时间步数: ' + stageMap.timeline.length,
+        '实测水位时间步数: ' + stageObsMap.timeline.length,
+        '流量时间步数: ' + flowMap.timeline.length,
+        '实测流量时间步数: ' + obsMap.timeline.length,
+        '边关系数: ' + edges.length,
+        '渠底高程来源: gates_mesh.csv.z',
+        '案例根目录: ' + String(rootPathEl.value || '').trim(),
+        '提示: 点击地图闸门后，左侧显示 edges target 闸前水位，右侧显示相关闸门流量与入流/出流求和。'
+      ].join('\n');
+    }
+
+    map.on('singleclick', function(evt) {
+      const gateHit = map.forEachFeatureAtPixel(evt.pixel, function(feature, layer) {
+        if (layer === gateLayer) return feature;
+        return null;
+      }, { hitTolerance: 8 });
+      if (gateHit) {
+        const gateName = String(gateHit.get('name') || '').trim();
+        if (!gateName) return;
+        selectedGateName = gateName;
+        gateLayer.changed();
+        // 点击闸门仅高亮对应曲线卡片，不改变当前渠段/闸门图表结果。
+        setActiveGateFlowCard(gateName);
+        return;
+      }
+
+      const channelHit = map.forEachFeatureAtPixel(evt.pixel, function(feature, layer) {
+        if (layer === channelLayer) return feature;
+        return null;
+      }, { hitTolerance: 10 });
+      if (!channelHit) return;
+
+      const segmentLabel = String(channelHit.get('segmentLabel') || '').trim();
+      selectedChannelLabel = segmentLabel;
+      channelLayer.changed();
+      setGateSegmentInfoButtonState();
+
+      const sourceGate = String(channelHit.get('source') || '').trim();
+      if (!sourceGate) return;
+      // 点击渠段按“渠段为单位”切换展示结果。
+      renderSelectionCharts(sourceGate);
+    });
+
+    document.getElementById('reloadBtn').addEventListener('click', () => {
+      reload().catch((error) => {
+        console.error(error);
+        statsEl.textContent = String(error && error.message ? error.message : error);
+      });
+    });
+
+    document.getElementById('fitBtn').addEventListener('click', () => {
+      const extG = gateSource.getExtent();
+      const extC = channelSource.getExtent();
+      let extent = ol.extent.createEmpty();
+      if (!ol.extent.isEmpty(extC)) ol.extent.extend(extent, extC);
+      if (!ol.extent.isEmpty(extG)) ol.extent.extend(extent, extG);
+      if (!ol.extent.isEmpty(extent)) {
+        map.getView().fit(extent, { padding: [40, 210, 40, 40], duration: 300, maxZoom: 12 });
+      }
+    });
+
+    if (waterlineToggleBtnEl) {
+      waterlineToggleBtnEl.addEventListener('click', () => {
+        setWaterlineCollapsed(!waterlineCollapsed);
+      });
+    }
+    if (waterlinePlayBtnEl) {
+      waterlinePlayBtnEl.addEventListener('click', () => {
+        playWaterline();
+      });
+    }
+    if (waterlineModeBtnEl) {
+      waterlineModeBtnEl.addEventListener('click', () => {
+        setWaterlineMode(waterlineMode === 'stake' ? 'gate' : 'stake');
+      });
+    }
+    if (waterlinePauseBtnEl) {
+      waterlinePauseBtnEl.addEventListener('click', () => {
+        pauseWaterline();
+      });
+    }
+    if (waterlineResetBtnEl) {
+      waterlineResetBtnEl.addEventListener('click', () => {
+        resetWaterlineView();
+      });
+    }
+    if (gateSegmentInfoBtnEl) {
+      gateSegmentInfoBtnEl.addEventListener('click', () => {
+        renderCurrentChannelSegmentInfo();
+      });
+    }
+    if (segmentInfoCloseBtnEl) {
+      segmentInfoCloseBtnEl.addEventListener('click', () => {
+        hideCurrentChannelSegmentInfo();
+      });
+    }
+    if (segmentInfoModalEl) {
+      segmentInfoModalEl.addEventListener('click', (evt) => {
+        if (evt.target === segmentInfoModalEl) hideCurrentChannelSegmentInfo();
+      });
+    }
+    window.addEventListener('keydown', (evt) => {
+      if (evt.key === 'Escape') hideCurrentChannelSegmentInfo();
+    });
+    initLayoutSplitter();
+    setWaterlineCollapsed(false);
+    setGateSegmentInfoButtonState();
+
+    reload().catch((error) => {
+      console.error(error);
+      statsEl.textContent = String(error && error.message ? error.message : error);
+    });
+  </script>
+</body>
+</html>
