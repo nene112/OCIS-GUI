@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>图表汇总</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: Microsoft YaHei, sans-serif;
+    }
+    .standalone-head {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #f8fafc;
+      padding: 0 0 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+      margin-bottom: 10px;
+    }
+    .standalone-head h1 {
+      margin: 0;
+      font-size: 16px;
+    }
+    .standalone-head p {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: #64748b;
+    }
+    .standalone-head-controls {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #334155;
+    }
+    .standalone-head-controls label {
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .standalone-head-controls select {
+      border: 1px solid rgba(148, 163, 184, 0.65);
+      border-radius: 8px;
+      background: #fff;
+      color: #0f172a;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 2px 8px;
+      min-width: 64px;
+    }
+    .chart-list {
+      display: grid;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .chart-empty {
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 8px 2px;
+    }
+    .detail-chart-card {
+      border: 1px solid rgba(15, 118, 110, 0.2);
+      border-radius: 10px;
+      background: #fff;
+      padding: 2px 10px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+      min-height: 218px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .detail-chart-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 2px;
+    }
+    .detail-chart-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin: 0;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+    .detail-chart-title-meta {
+      font-size: 11px;
+      color: #64748b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+      min-width: 0;
+      flex: 1;
+    }
+    .detail-chart-plot {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 180px;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+    @media (max-width: 860px) {
+      body {
+        padding: 10px;
+      }
+      .standalone-head h1 {
+        font-size: 14px;
+      }
+    }
+  </style>
+  <script src="/vendor/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+  <div class="standalone-head">
+    <h1 id="standaloneTitle">图表汇总</h1>
+    <p id="standaloneSubtitle"></p>
+    <div class="standalone-head-controls">
+      <label for="columnCountSelect">每行图表数</label>
+      <select id="columnCountSelect">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+      </select>
+    </div>
+  </div>
+  <div class="chart-list" id="chartList"></div>
+
+  <script>
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function buildPlotPoints(series, timeline) {
+      var y = [];
+      var x = [];
+      var t = [];
+      var values = Array.isArray(series) ? series : [];
+      var labels = Array.isArray(timeline) ? timeline : [];
+      for (var i = 0; i < values.length; i += 1) {
+        var v = values[i];
+        if (!Number.isFinite(v)) continue;
+        y.push(v);
+        x.push(i + 1);
+        t.push(String(labels[i] || ''));
+      }
+      return { x: x, y: y, t: t };
+    }
+
+    var currentSpecs = [];
+
+    function normalizeColumnCount(value) {
+      var n = Number(value);
+      if (!Number.isFinite(n)) return 1;
+      n = Math.round(n);
+      if (n < 1) n = 1;
+      if (n > 6) n = 6;
+      return n;
+    }
+
+    function setChartColumns(columnCount) {
+      var chartListEl = document.getElementById('chartList');
+      if (!chartListEl) return;
+      var cols = normalizeColumnCount(columnCount);
+      chartListEl.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+
+      if (window.Plotly) {
+        window.requestAnimationFrame(function() {
+          var plots = chartListEl.querySelectorAll('.detail-chart-plot');
+          plots.forEach(function(host) {
+            try {
+              Plotly.Plots.resize(host);
+            } catch (_) {}
+          });
+        });
+      }
+    }
+
+    function resolveDefaultColumns(payload) {
+      var fromPayload = payload && payload.defaultColumns;
+      if (Number.isFinite(Number(fromPayload))) {
+        return normalizeColumnCount(fromPayload);
+      }
+      var title = String((payload && payload.title) || '');
+      if (title.indexOf('水位') >= 0) {
+        return 4;
+      }
+      return 2;
+    }
+
+    function renderSpecs(specs) {
+      var chartListEl = document.getElementById('chartList');
+      var list = Array.isArray(specs) ? specs : [];
+      if (!list.length) {
+        chartListEl.innerHTML = '<div class="chart-empty">当前无图表可展示。</div>';
+        return;
+      }
+
+      var html = list.map(function(spec, index) {
+        var plotId = 'standalone-plot-' + index;
+        var title = escapeHtml(spec && spec.title);
+        var subtitle = escapeHtml(spec && spec.subtitle);
+        var meta = escapeHtml(spec && spec.headerMeta);
+        return [
+          '<div class="detail-chart-card">',
+          '<div class="detail-chart-head"><p class="detail-chart-title">' + title + (subtitle ? ('（' + subtitle + '）') : '') + '</p>' + (meta ? ('<span class="detail-chart-title-meta">' + meta + '</span>') : '') + '</div>',
+          '<div id="' + plotId + '" class="detail-chart-plot"></div>',
+          '</div>'
+        ].join('');
+      }).join('');
+      chartListEl.innerHTML = html;
+
+      if (!window.Plotly) {
+        return;
+      }
+
+      list.forEach(function(spec, index) {
+        var host = document.getElementById('standalone-plot-' + index);
+        if (!host) return;
+
+        var traces = [];
+        var seriesList = Array.isArray(spec && spec.seriesList) ? spec.seriesList : [];
+        seriesList.forEach(function(series) {
+          var points = buildPlotPoints(series && series.values, spec && spec.timeline);
+          if (!points.y.length) return;
+          traces.push({
+            x: points.x,
+            y: points.y,
+            customdata: points.t,
+            type: 'scatter',
+            mode: String((series && series.mode) || 'lines'),
+            name: String((series && series.label) || ''),
+            hovertemplate: '步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>',
+            line: {
+              color: String((series && series.color) || '#0f766e'),
+              width: 2,
+              dash: String((series && series.dash) || 'solid')
+            },
+            marker: {
+              color: String((series && (series.markerColor || series.color)) || '#0f766e'),
+              size: Number((series && series.markerSize) || 5)
+            }
+          });
+        });
+
+        if (!traces.length) {
+          host.innerHTML = '<div class="chart-empty">无数据</div>';
+          return;
+        }
+
+        Plotly.newPlot(host, traces, {
+          margin: { l: 44, r: 12, t: 0, b: 28 },
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(15,118,110,0.04)',
+          showlegend: true,
+          legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 10 } },
+          xaxis: {
+            title: { text: '时间步序号', standoff: 2, font: { size: 10 } },
+            tickfont: { size: 10, color: '#64748b' },
+            showgrid: true,
+            gridcolor: 'rgba(148,163,184,0.18)',
+            zeroline: false,
+            automargin: true
+          },
+          yaxis: {
+            title: { text: String((spec && spec.yUnit) || ''), standoff: 4, font: { size: 10 } },
+            tickfont: { size: 10, color: '#64748b' },
+            showgrid: true,
+            gridcolor: 'rgba(148,163,184,0.22)',
+            zeroline: false,
+            nticks: 5,
+            automargin: true
+          }
+        }, {
+          displayModeBar: false,
+          responsive: true,
+          staticPlot: false,
+          locale: 'zh-CN'
+        });
+      });
+    }
+
+    function bootstrap() {
+      var params = new URLSearchParams(window.location.search || '');
+      var key = params.get('chartsKey') || '';
+      if (!key) {
+        document.getElementById('chartList').innerHTML = '<div class="chart-empty">缺少 chartsKey 参数。</div>';
+        return;
+      }
+
+      var raw = '';
+      try {
+        raw = localStorage.getItem(key) || '';
+      } catch (e) {
+        raw = '';
+      }
+      if (!raw) {
+        document.getElementById('chartList').innerHTML = '<div class="chart-empty">未找到图表数据，可能已过期。请返回主页面重新点击“全部图表”。</div>';
+        return;
+      }
+
+      var payload = null;
+      try {
+        payload = JSON.parse(raw);
+      } catch (e) {
+        payload = null;
+      }
+      if (!payload || !Array.isArray(payload.specs)) {
+        document.getElementById('chartList').innerHTML = '<div class="chart-empty">图表数据格式无效。</div>';
+        return;
+      }
+
+      document.title = String(payload.title || '图表汇总');
+      document.getElementById('standaloneTitle').textContent = String(payload.title || '图表汇总');
+      document.getElementById('standaloneSubtitle').textContent = String(payload.subtitle || '');
+      currentSpecs = payload.specs;
+      renderSpecs(currentSpecs);
+
+      var selectEl = document.getElementById('columnCountSelect');
+      var defaultColumns = resolveDefaultColumns(payload);
+      if (selectEl) {
+        selectEl.value = String(defaultColumns);
+        selectEl.addEventListener('change', function() {
+          setChartColumns(selectEl.value);
+        });
+      }
+      setChartColumns(defaultColumns);
+
+      try {
+        localStorage.removeItem(key);
+      } catch (e) {}
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+      bootstrap();
+    }
+  </script>
+</body>
+</html>

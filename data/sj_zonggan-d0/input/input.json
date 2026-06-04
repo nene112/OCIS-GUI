@@ -1,0 +1,36 @@
+{
+
+    "waterDemand": {
+
+    },
+    "obs": {
+      "黄壁庄":{
+        // "fixed_W":1
+        "fixed":1
+        // "flow":29.1,
+        // "delta_Q_max":10
+        // "end_flow":72.5
+      },
+      "赵陵铺测段":{
+        "fixed":1
+        // "flow":32.24
+        // "delta_Q_max":20
+      },
+      "引江口":{
+        // "flow":0.7,
+        "fixed":1
+      },
+      "大田退水":{
+        // "flow":0.7,
+        "fixed":1
+      }
+},
+    "CalculationParams": {
+        "start_time": "2024/3/01 0:00:00",
+        "T":960,
+        // "MILP_dt": 172800,
+        "MILP_dt": 86400,
+        "W_based_optimalAllocation": 1,
+        "boundary_stage_cons_label":1
+    }
+}

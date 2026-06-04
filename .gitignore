@@ -1,0 +1,33 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Data policy:
+# Keep only selected files in each case folder under data/
+data/**
+!data/
+!data/*/
+!data/*/input/
+!data/*/input/input.json
+!data/*/mesh/
+!data/*/mesh/input.txt
+!data/*/mesh/lineParam.txt
+!data/*/mesh/lineParamRelate.txt
+!data/*/mesh/neighborId.txt
+!data/*/mesh/edges.csv

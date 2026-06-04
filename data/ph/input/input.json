@@ -1,0 +1,13 @@
+{
+    "waterDemand": {
+    },
+    "obs": {
+    },
+    "delay_time": [],
+    "bc_Stage":["渠首-孟营"],
+    "CalculationParams": {
+        "start_time": "2020/7/17 8:00:00",
+        "T":72
+        // "fixed_y":1
+    }
+}

@@ -222,6 +222,13 @@
       opacity: 0.45;
       cursor: not-allowed;
     }
+    .pane-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex-shrink: 0;
+    }
     .segment-info-modal {
       position: fixed;
       inset: 0;
@@ -713,6 +720,9 @@
           <div class="pane-head">
             <h3>渠段图表</h3>
             <span id="channelPaneMeta" class="pane-head-meta"></span>
+            <div class="pane-head-actions">
+              <button type="button" id="channelAllChartsBtn" class="pane-head-btn">全部图表(新标签)</button>
+            </div>
           </div>
           <div class="chart-list" id="channelChartList"></div>
         </section>
@@ -720,7 +730,10 @@
           <div class="pane-head">
             <h3>闸门图表</h3>
             <span id="gatePaneMeta" class="pane-head-meta"></span>
-            <button type="button" id="gateSegmentInfoBtn" class="pane-head-btn" disabled>渠段信息</button>
+            <div class="pane-head-actions">
+              <button type="button" id="gateAllChartsBtn" class="pane-head-btn">全部图表(新标签)</button>
+              <button type="button" id="gateSegmentInfoBtn" class="pane-head-btn" disabled>渠段信息</button>
+            </div>
           </div>
           <div class="chart-list" id="gateChartList"></div>
         </section>
@@ -844,8 +857,10 @@
     const channelLegendItemsEl = document.getElementById('channelLegendItems');
     const channelChartListEl = document.getElementById('channelChartList');
     const channelPaneMetaEl = document.getElementById('channelPaneMeta');
+    const channelAllChartsBtnEl = document.getElementById('channelAllChartsBtn');
     const gateChartListEl = document.getElementById('gateChartList');
     const gatePaneMetaEl = document.getElementById('gatePaneMeta');
+    const gateAllChartsBtnEl = document.getElementById('gateAllChartsBtn');
     const gateSegmentInfoBtnEl = document.getElementById('gateSegmentInfoBtn');
     const segmentInfoModalEl = document.getElementById('segmentInfoModal');
     const segmentInfoBodyEl = document.getElementById('segmentInfoBody');
@@ -2351,6 +2366,345 @@
       gateSegmentInfoBtnEl.disabled = !String(selectedChannelLabel || '').trim();
     }
 
+    function buildStandaloneChartsDocument(title, subtitle, chartListHtml) {
+      const safeTitle = escapeHtmlAttr(title);
+      const safeSubtitle = escapeHtmlAttr(subtitle || '');
+      const contentHtml = chartListHtml && String(chartListHtml).trim()
+        ? chartListHtml
+        : '<div class="chart-empty">当前无图表可展示。</div>';
+      return [
+        '<!doctype html>',
+        '<html lang="zh-CN">',
+        '<head>',
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<title>' + safeTitle + '</title>',
+        '<style>',
+        'body{margin:0;padding:16px;background:#f8fafc;color:#0f172a;font-family:Microsoft YaHei,sans-serif;}',
+        '.standalone-head{position:sticky;top:0;z-index:10;background:#f8fafc;padding:0 0 10px;border-bottom:1px solid rgba(148,163,184,0.25);margin-bottom:10px;}',
+        '.standalone-head h1{margin:0;font-size:16px;}',
+        '.standalone-head p{margin:6px 0 0;font-size:12px;color:#64748b;}',
+        '.chart-list{display:flex;flex-direction:column;gap:10px;}',
+        '.chart-empty{color:#64748b;font-size:12px;line-height:1.6;padding:8px 2px;}',
+        '.detail-chart-card{border:1px solid rgba(15,118,110,0.2);border-radius:10px;background:#fff;padding:2px 10px;box-shadow:0 2px 8px rgba(15,23,42,0.06);min-height:218px;display:flex;flex-direction:column;min-width:0;}',
+        '.detail-chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px;}',
+        '.detail-chart-title{font-size:12px;font-weight:700;margin:0;color:#0f172a;white-space:nowrap;}',
+        '.detail-chart-title-meta{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right;min-width:0;flex:1;}',
+        '.detail-chart-meta{display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#64748b;margin-top:6px;}',
+        '.detail-chart-plot{display:block;width:100%;height:auto;min-height:180px;flex:1 1 auto;overflow:hidden;}',
+        '.flow-breakdown{margin-top:6px;border:1px solid rgba(15,118,110,0.2);border-radius:8px;background:rgba(248,251,253,0.85);overflow:hidden;}',
+        '.flow-breakdown summary{cursor:pointer;list-style:none;padding:6px 8px;font-size:11px;font-weight:600;color:#0f766e;user-select:none;}',
+        '.flow-breakdown summary::-webkit-details-marker{display:none;}',
+        '.flow-breakdown-content{padding:0 8px 8px;}',
+        '.flow-breakdown-table{width:100%;border-collapse:collapse;font-size:11px;color:#334155;}',
+        '.flow-breakdown-table th,.flow-breakdown-table td{border-bottom:1px solid rgba(148,163,184,0.25);padding:4px 2px;text-align:left;white-space:nowrap;}',
+        '.flow-breakdown-table th:last-child,.flow-breakdown-table td:last-child{text-align:right;}',
+        '.flow-breakdown-empty{font-size:11px;color:#64748b;padding:2px 0;}',
+        '@media (max-width: 860px){body{padding:10px;}.standalone-head h1{font-size:14px;}}',
+        '</style>',
+        '</head>',
+        '<body>',
+        '<div class="standalone-head"><h1>' + safeTitle + '</h1><p>' + safeSubtitle + '</p></div>',
+        '<div class="chart-list">' + contentHtml + '</div>',
+        '</body>',
+        '</html>'
+      ].join('');
+    }
+
+    function openStandaloneChartsWindow(title, listEl, paneMetaEl) {
+      const subtitleParts = [];
+      const metaText = paneMetaEl ? String(paneMetaEl.textContent || '').trim() : '';
+      if (metaText) subtitleParts.push(metaText);
+      const gateText = selectedGateName ? ('当前闸门=' + selectedGateName) : '';
+      if (gateText) subtitleParts.push(gateText);
+      const channelText = selectedChannelLabel ? ('当前渠段=' + selectedChannelLabel) : '';
+      if (channelText) subtitleParts.push(channelText);
+      subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
+
+      const docHtml = buildStandaloneChartsDocument(
+        title,
+        subtitleParts.join(' | '),
+        listEl ? listEl.innerHTML : ''
+      );
+
+      // 使用 Blob URL 打开新标签页，避免部分浏览器在 document.write 下出现空白页。
+      const blob = new Blob([docHtml], { type: 'text/html;charset=utf-8' });
+      const blobUrl = URL.createObjectURL(blob);
+      const popup = window.open(blobUrl, '_blank');
+      if (!popup) {
+        URL.revokeObjectURL(blobUrl);
+        alert('浏览器阻止了新标签页弹出，请允许弹窗后重试。');
+        return;
+      }
+      window.setTimeout(() => {
+        try {
+          URL.revokeObjectURL(blobUrl);
+        } catch (_) {}
+      }, 60 * 1000);
+    }
+
+    function hasFiniteValue(values) {
+      if (!Array.isArray(values) || !values.length) return false;
+      for (let i = 0; i < values.length; i += 1) {
+        if (Number.isFinite(values[i])) return true;
+      }
+      return false;
+    }
+
+    function buildAllChannelChartSpecs() {
+      const nameSet = new Set();
+      (Array.isArray(currentGateRows) ? currentGateRows : []).forEach((gate) => {
+        const name = normalizeHeader(gate && gate.name);
+        if (name) nameSet.add(name);
+      });
+      if (currentStageMap && currentStageMap.byName instanceof Map) {
+        currentStageMap.byName.forEach((_, key) => {
+          const name = normalizeHeader(key);
+          if (name) nameSet.add(name);
+        });
+      }
+
+      const names = Array.from(nameSet);
+      names.sort((a, b) => String(a || '').localeCompare(String(b || ''), 'zh-CN'));
+
+      const specs = [];
+      names.forEach((name) => {
+        const values = getStageSeriesByName(currentStageMap, name);
+        if (!hasFiniteValue(values)) return;
+        const obsValues = getStageObsSeriesForName(name);
+        const lastValue = getLastFiniteValue(values);
+        const obsLastValue = getLastFiniteValue(obsValues);
+        const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
+          (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
+
+        const seriesList = [
+          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+        ];
+        if (hasFiniteValue(obsValues)) {
+          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+        }
+
+        specs.push({
+          title: name,
+          subtitle: '闸前水位(H1)',
+          timeline: Array.isArray(currentStageMap.timeline) ? currentStageMap.timeline : [],
+          yUnit: 'm',
+          headerMeta: headerMeta,
+          seriesList: seriesList
+        });
+      });
+      return specs;
+    }
+
+    function buildAllGateFlowChartSpecs() {
+      const nameSet = new Set();
+      (Array.isArray(currentGateRows) ? currentGateRows : []).forEach((gate) => {
+        const name = normalizeHeader(gate && gate.name);
+        if (name) nameSet.add(name);
+      });
+      if (currentFlowMap && currentFlowMap.byName instanceof Map) {
+        currentFlowMap.byName.forEach((_, key) => {
+          const name = normalizeHeader(key);
+          if (name) nameSet.add(name);
+        });
+      }
+
+      const names = Array.from(nameSet);
+      names.sort((a, b) => {
+        const inA = currentGatesIniNameSet.has(canonicalName(a)) ? 1 : 0;
+        const inB = currentGatesIniNameSet.has(canonicalName(b)) ? 1 : 0;
+        if (inA !== inB) return inB - inA;
+        return String(a || '').localeCompare(String(b || ''), 'zh-CN');
+      });
+
+      const specs = [];
+      names.forEach((name) => {
+        const values = getFlowSeriesForName(name);
+        if (!hasFiniteValue(values)) return;
+        const obsValues = getObsSeriesForName(name);
+        const lastValue = getLastFiniteValue(values);
+        const obsLastValue = getLastFiniteValue(obsValues);
+        const inIni = currentGatesIniNameSet.has(canonicalName(name));
+        const headerMeta = (inIni ? 'Gates.ini' : '非Gates.ini') + ' | 末值=' +
+          (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
+          (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+
+        const seriesList = [
+          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+        ];
+        if (hasFiniteValue(obsValues)) {
+          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+        }
+
+        specs.push({
+          title: name,
+          subtitle: '闸门流量过程线',
+          timeline: Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [],
+          yUnit: 'm^3/s',
+          headerMeta: headerMeta,
+          seriesList: seriesList
+        });
+      });
+      return specs;
+    }
+
+    function buildStandaloneCardsHtmlFromSpecs(specs) {
+      const list = Array.isArray(specs) ? specs : [];
+      if (!list.length) return '<div class="chart-empty">当前无图表可展示。</div>';
+
+      return list.map((spec, index) => {
+        const plotId = 'popup-plot-' + (index + 1);
+        const t = escapeHtmlAttr(spec && spec.title);
+        const s = escapeHtmlAttr(spec && spec.subtitle);
+        const m = escapeHtmlAttr(spec && spec.headerMeta);
+        return [
+          '<div class="detail-chart-card">',
+          '<div class="detail-chart-head"><p class="detail-chart-title">' + t + (s ? '（' + s + '）' : '') + '</p>' + (m ? ('<span class="detail-chart-title-meta">' + m + '</span>') : '') + '</div>',
+          '<div id="' + plotId + '" class="detail-chart-plot"></div>',
+          '</div>'
+        ].join('');
+      }).join('');
+    }
+
+    function buildStandaloneChartsDocumentBySpecs(title, subtitle, specs) {
+      const safeTitle = escapeHtmlAttr(title);
+      const safeSubtitle = escapeHtmlAttr(subtitle || '');
+      const chartCardsHtml = buildStandaloneCardsHtmlFromSpecs(specs);
+      const safeSpecsJson = JSON.stringify(Array.isArray(specs) ? specs : []).replace(/</g, '\\u003c');
+      return [
+        '<!doctype html>',
+        '<html lang="zh-CN">',
+        '<head>',
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<title>' + safeTitle + '</title>',
+        '<style>',
+        'body{margin:0;padding:16px;background:#f8fafc;color:#0f172a;font-family:Microsoft YaHei,sans-serif;}',
+        '.standalone-head{position:sticky;top:0;z-index:10;background:#f8fafc;padding:0 0 10px;border-bottom:1px solid rgba(148,163,184,0.25);margin-bottom:10px;}',
+        '.standalone-head h1{margin:0;font-size:16px;}',
+        '.standalone-head p{margin:6px 0 0;font-size:12px;color:#64748b;}',
+        '.chart-list{display:flex;flex-direction:column;gap:10px;}',
+        '.chart-empty{color:#64748b;font-size:12px;line-height:1.6;padding:8px 2px;}',
+        '.detail-chart-card{border:1px solid rgba(15,118,110,0.2);border-radius:10px;background:#fff;padding:2px 10px;box-shadow:0 2px 8px rgba(15,23,42,0.06);min-height:218px;display:flex;flex-direction:column;min-width:0;}',
+        '.detail-chart-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px;}',
+        '.detail-chart-title{font-size:12px;font-weight:700;margin:0;color:#0f172a;white-space:nowrap;}',
+        '.detail-chart-title-meta{font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right;min-width:0;flex:1;}',
+        '.detail-chart-plot{display:block;width:100%;height:auto;min-height:180px;flex:1 1 auto;overflow:hidden;}',
+        '@media (max-width: 860px){body{padding:10px;}.standalone-head h1{font-size:14px;}}',
+        '</style>',
+        '<script src="/vendor/plotly-2.35.2.min.js"><\\/script>',
+        '</head>',
+        '<body>',
+        '<div class="standalone-head"><h1>' + safeTitle + '</h1><p>' + safeSubtitle + '</p></div>',
+        '<div class="chart-list">' + chartCardsHtml + '</div>',
+        '<script id="standaloneChartSpecs" type="application/json">' + safeSpecsJson + '<\\/script>',
+        '<script>',
+        '(function(){',
+        '  function buildPlotPoints(series, timeline){',
+        '    var y=[]; var x=[]; var t=[];',
+        '    var values = Array.isArray(series)?series:[];',
+        '    var labels = Array.isArray(timeline)?timeline:[];',
+        '    for(var i=0;i<values.length;i+=1){',
+        '      var v = values[i];',
+        '      if (!Number.isFinite(v)) continue;',
+        '      y.push(v); x.push(i+1); t.push(String(labels[i]||""));',
+        '    }',
+        '    return {x:x,y:y,t:t};',
+        '  }',
+        '  function draw(){',
+        '    var holder = document.getElementById("standaloneChartSpecs");',
+        '    if (!holder) return;',
+        '    var specs = [];',
+        '    try { specs = JSON.parse(holder.textContent || "[]"); } catch(e) { specs = []; }',
+        '    if (!window.Plotly) return;',
+        '    for(var i=0;i<specs.length;i+=1){',
+        '      var spec = specs[i] || {};',
+        '      var host = document.getElementById("popup-plot-" + (i + 1));',
+        '      if (!host) continue;',
+        '      var traces = [];',
+        '      var list = Array.isArray(spec.seriesList) ? spec.seriesList : [];',
+        '      for(var j=0;j<list.length;j+=1){',
+        '        var s = list[j] || {};',
+        '        var pts = buildPlotPoints(s.values, spec.timeline);',
+        '        if (!pts.y.length) continue;',
+        '        traces.push({',
+        '          x: pts.x, y: pts.y, customdata: pts.t, type: "scatter",',
+        '          mode: String(s.mode || "lines"), name: String(s.label || ""),',
+        '          hovertemplate: "步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>",',
+        '          line: { color: String(s.color || "#0f766e"), width: 2, dash: String(s.dash || "solid") },',
+        '          marker: { color: String(s.markerColor || s.color || "#0f766e"), size: Number(s.markerSize || 5) }',
+        '        });',
+        '      }',
+        '      if (!traces.length) { host.innerHTML = "<div class=\\"chart-empty\\">无数据</div>"; continue; }',
+        '      Plotly.newPlot(host, traces, {',
+        '        margin: { l: 44, r: 12, t: 0, b: 28 },',
+        '        paper_bgcolor: "rgba(0,0,0,0)",',
+        '        plot_bgcolor: "rgba(15,118,110,0.04)",',
+        '        showlegend: true,',
+        '        legend: { orientation: "h", x: 0, y: 1.2, font: { size: 10 } },',
+        '        xaxis: { title: { text: "时间步序号", standoff: 2, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.18)", zeroline: false, automargin: true },',
+        '        yaxis: { title: { text: String(spec.yUnit || ""), standoff: 4, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.22)", zeroline: false, nticks: 5, automargin: true }',
+        '      }, { displayModeBar: false, responsive: true, staticPlot: false, locale: "zh-CN" });',
+        '    }',
+        '  }',
+        '  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", draw); else draw();',
+        '})();',
+        '<\\/script>',
+        '</body>',
+        '</html>'
+      ].join('');
+    }
+
+    function openStandaloneChartsBySpecs(title, paneMetaEl, specs) {
+      const subtitleParts = [];
+      const metaText = paneMetaEl ? String(paneMetaEl.textContent || '').trim() : '';
+      if (metaText) subtitleParts.push(metaText);
+      subtitleParts.push('图表数量=' + (Array.isArray(specs) ? specs.length : 0));
+      subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
+
+      const payload = {
+        title: String(title || ''),
+        subtitle: subtitleParts.join(' | '),
+        specs: Array.isArray(specs) ? specs : [],
+        defaultColumns: String(title || '').indexOf('水位') >= 0 ? 4 : 2
+      };
+      const storageKey = 'standaloneCharts:' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
+
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(payload));
+      } catch (storageError) {
+        // localStorage 写入失败时回退 Blob 方案。
+        const docHtml = buildStandaloneChartsDocumentBySpecs(
+          payload.title,
+          payload.subtitle,
+          payload.specs
+        );
+        const blob = new Blob([docHtml], { type: 'text/html;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
+        const popupByBlob = window.open(blobUrl, '_blank');
+        if (!popupByBlob) {
+          URL.revokeObjectURL(blobUrl);
+          alert('浏览器阻止了新标签页弹出，请允许弹窗后重试。');
+          return;
+        }
+        window.setTimeout(() => {
+          try {
+            URL.revokeObjectURL(blobUrl);
+          } catch (_) {}
+        }, 60 * 1000);
+        return;
+      }
+
+      const standaloneUrl = 'standalone_charts.html?chartsKey=' + encodeURIComponent(storageKey);
+      const popup = window.open(standaloneUrl, '_blank');
+      if (!popup) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch (_) {}
+        alert('浏览器阻止了新标签页弹出，请允许弹窗后重试。');
+      }
+    }
+
     function classifyDirectEdgeType(edgeType) {
       const t = Number(edgeType);
       if (t === 1) return '入流(type=1)';
@@ -3039,55 +3393,89 @@
       gateChartListEl.innerHTML = '';
       channelChartListEl.innerHTML = '';
 
-      const targetNames = Array.from(targetSet);
       const channelCards = [];
-      // 展示当前 source 的闸前水位(H1)及实测水位。
-      const sourceStageValues = currentStageMap.byName.get(gateName) || [];
-      if (sourceStageValues.length) {
-        const sourceStageObsValues = getStageObsSeriesForName(gateName);
-        const sourceLastValue = getLastFiniteValue(sourceStageValues);
-        const sourceObsLastValue = getLastFiniteValue(sourceStageObsValues);
-        const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
-          (sourceStageObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
-        channelCards.push(buildChartCardHtml(gateName, sourceStageValues, 'source 闸前水位', {
-          timeline: currentStageMap.timeline,
-          yUnit: 'm',
-          obsValues: sourceStageObsValues,
-          showTimelineInfo: false,
-          headerMeta: sourceMeta
-        }));
-      }
-      // 展示当前 source 的下游水深(H2)过程线。
-      const sourceH2Values = getStageSeriesByName(currentStageH2Map, gateName);
-      if (sourceH2Values.length) {
-        const h2Last = getLastFiniteValue(sourceH2Values);
-        const h2Meta = '末值=' + (h2Last == null ? '-' : h2Last.toFixed(3)) + ' m';
-        channelCards.push(buildChartCardHtml(gateName, sourceH2Values, 'source 下游水深(H2)', {
-          timeline: currentStageH2Map.timeline,
-          yUnit: 'm',
-          showTimelineInfo: false,
-          headerMeta: h2Meta
-        }));
-      }
-      for (let i = 0; i < targetNames.length; i += 1) {
-        const targetName = targetNames[i];
-        const stageValues = currentStageMap.byName.get(targetName) || [];
-        if (!stageValues.length) continue;
-        const stageObsValues = getStageObsSeriesForName(targetName);
-        const lastValue = getLastFiniteValue(stageValues);
-        const obsLastValue = getLastFiniteValue(stageObsValues);
-        const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
-          (stageObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
-        channelCards.push(buildChartCardHtml(targetName, stageValues, 'target 闸前水位', {
-          timeline: currentStageMap.timeline,
-          yUnit: 'm',
-          obsValues: stageObsValues,
-          showTimelineInfo: false,
-          headerMeta: headerMeta
-        }));
+      if (segmentMode) {
+        // 渠段模式：严格按主边 source/target 展示。
+        const segmentSource = String(segmentInfo.source || '').trim();
+        const segmentTarget = String(segmentInfo.target || '').trim();
+
+        // source 闸下水位：优先 H2，缺失时回退 H1。
+        let sourceDownValues = getStageSeriesByName(currentStageH2Map, segmentSource);
+        let sourceDownTimeline = currentStageH2Map.timeline;
+        let sourceDownLabel = 'source 闸下水位(H2)';
+        if (!sourceDownValues.length) {
+          sourceDownValues = getStageSeriesByName(currentStageMap, segmentSource);
+          sourceDownTimeline = currentStageMap.timeline;
+          sourceDownLabel = 'source 闸下水位(回退H1)';
+        }
+        if (sourceDownValues.length) {
+          const sourceObsValues = getStageObsSeriesForName(segmentSource);
+          const sourceLastValue = getLastFiniteValue(sourceDownValues);
+          const sourceObsLastValue = getLastFiniteValue(sourceObsValues);
+          const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
+            (sourceObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(segmentSource, sourceDownValues, sourceDownLabel, {
+            timeline: sourceDownTimeline,
+            yUnit: 'm',
+            obsValues: sourceObsValues,
+            showTimelineInfo: false,
+            headerMeta: sourceMeta
+          }));
+        }
+
+        // target 闸上水位：使用 H1(stage) 显式展示。
+        const targetUpValues = getStageSeriesByName(currentStageMap, segmentTarget);
+        if (targetUpValues.length) {
+          const targetObsValues = getStageObsSeriesForName(segmentTarget);
+          const targetLastValue = getLastFiniteValue(targetUpValues);
+          const targetObsLastValue = getLastFiniteValue(targetObsValues);
+          const targetMeta = '末值=' + (targetLastValue == null ? '-' : targetLastValue.toFixed(3)) + ' m' +
+            (targetObsValues.length ? (' | 实测末值=' + (targetObsLastValue == null ? '-' : targetObsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(segmentTarget, targetUpValues, 'target 闸上水位(H1)', {
+            timeline: currentStageMap.timeline,
+            yUnit: 'm',
+            obsValues: targetObsValues,
+            showTimelineInfo: false,
+            headerMeta: targetMeta
+          }));
+        }
+      } else {
+        const targetNames = Array.from(targetSet);
+        const sourceStageValues = currentStageMap.byName.get(gateName) || [];
+        if (sourceStageValues.length) {
+          const sourceStageObsValues = getStageObsSeriesForName(gateName);
+          const sourceLastValue = getLastFiniteValue(sourceStageValues);
+          const sourceObsLastValue = getLastFiniteValue(sourceStageObsValues);
+          const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
+            (sourceStageObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(gateName, sourceStageValues, 'source 闸前水位', {
+            timeline: currentStageMap.timeline,
+            yUnit: 'm',
+            obsValues: sourceStageObsValues,
+            showTimelineInfo: false,
+            headerMeta: sourceMeta
+          }));
+        }
+        for (let i = 0; i < targetNames.length; i += 1) {
+          const targetName = targetNames[i];
+          const stageValues = currentStageMap.byName.get(targetName) || [];
+          if (!stageValues.length) continue;
+          const stageObsValues = getStageObsSeriesForName(targetName);
+          const lastValue = getLastFiniteValue(stageValues);
+          const obsLastValue = getLastFiniteValue(stageObsValues);
+          const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
+            (stageObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(targetName, stageValues, 'target 闸前水位', {
+            timeline: currentStageMap.timeline,
+            yUnit: 'm',
+            obsValues: stageObsValues,
+            showTimelineInfo: false,
+            headerMeta: headerMeta
+          }));
+        }
       }
       if (!channelCards.length) {
-        channelChartListEl.innerHTML = '<div class="chart-empty">未找到该闸门关联边的 target 闸前水位数据。</div>';
+        channelChartListEl.innerHTML = '<div class="chart-empty">未找到当前渠段的 source 闸下水位 / target 闸上水位数据。</div>';
         applyChartListFillMode(channelChartListEl, 0);
       } else {
         channelChartListEl.innerHTML = channelCards.join('');
@@ -3425,6 +3813,16 @@
     if (gateSegmentInfoBtnEl) {
       gateSegmentInfoBtnEl.addEventListener('click', () => {
         renderCurrentChannelSegmentInfo();
+      });
+    }
+    if (channelAllChartsBtnEl) {
+      channelAllChartsBtnEl.addEventListener('click', () => {
+        openStandaloneChartsBySpecs('渠段图表（全案例水位）', channelPaneMetaEl, buildAllChannelChartSpecs());
+      });
+    }
+    if (gateAllChartsBtnEl) {
+      gateAllChartsBtnEl.addEventListener('click', () => {
+        openStandaloneChartsBySpecs('闸门图表（全案例流量）', gatePaneMetaEl, buildAllGateFlowChartSpecs());
       });
     }
     if (segmentInfoCloseBtnEl) {

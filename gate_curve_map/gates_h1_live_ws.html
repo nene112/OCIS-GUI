@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gates_h1 / gates_Q 实时曲线</title>
+  <script src="/src/vendor/plotly-2.35.2.min.js"></script>
+  <style>
+    body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f7f9fc; overflow-y: auto; }
+    .topbar { padding: 10px 14px; background: #0f172a; color: #e2e8f0; font-size: 14px; }
+    .topbar b { color: #7dd3fc; }
+    #chart {
+      width: 100vw;
+      min-height: calc(100vh - 44px);
+      height: auto;
+    }
+    #overviewChart {
+      width: 100vw;
+      height: 300px;
+      background: rgba(255, 255, 255, 0.9);
+    }
+    .control-panel {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 9999;
+      width: 280px;
+      background: rgba(15, 23, 42, 0.95);
+      color: #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+    .control-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      font-size: 14px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .control-body { padding: 12px; }
+    .control-panel.collapsed .control-body { display: none; }
+    .toggle-btn, .action-btn {
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .toggle-btn {
+      width: 28px;
+      height: 28px;
+      background: rgba(125, 211, 252, 0.16);
+      color: #e2e8f0;
+    }
+    .button-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .action-btn {
+      padding: 10px 8px;
+      background: #1d4ed8;
+      color: white;
+      font-size: 13px;
+    }
+    .action-btn.secondary { background: #475569; }
+    .action-btn.warn { background: #ea580c; }
+    .panel-meta {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+    .upload-block {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .upload-label {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 6px;
+      color: #cbd5e1;
+    }
+    .upload-input {
+      display: block;
+      width: 100%;
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-bottom: 8px;
+    }
+    .upload-status {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      min-height: 16px;
+    }
+    .history-block {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .history-list {
+      max-height: 180px;
+      overflow: auto;
+    }
+    .history-item {
+      padding: 8px;
+      border-radius: 8px;
+      background: rgba(30, 41, 59, 0.55);
+      margin-bottom: 8px;
+    }
+    .history-title {
+      font-size: 12px;
+      color: #e2e8f0;
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    .history-tags {
+      margin-bottom: 6px;
+    }
+    .history-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      line-height: 1.4;
+      border: 1px solid transparent;
+    }
+    .history-badge.ok {
+      color: #14532d;
+      background: #dcfce7;
+      border-color: #86efac;
+    }
+    .history-badge.warn {
+      color: #78350f;
+      background: #fef3c7;
+      border-color: #fcd34d;
+    }
+    .history-badge.unknown {
+      color: #334155;
+      background: #e2e8f0;
+      border-color: #cbd5e1;
+    }
+    .history-meta {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    .history-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .history-btn {
+      padding: 6px 8px;
+      font-size: 11px;
+      border: 0;
+      border-radius: 6px;
+      cursor: pointer;
+      color: white;
+      background: #2563eb;
+    }
+    .history-btn.delete { background: #dc2626; }
+    .memory-panel {
+      position: fixed;
+      right: 12px;
+      bottom: 12px;
+      z-index: 9998;
+      width: 170px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      backdrop-filter: blur(8px);
+    }
+    .memory-title {
+      font-size: 12px;
+      color: #334155;
+      margin-bottom: 6px;
+    }
+    .memory-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .memory-meta {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    #memoryChart {
+      width: 100%;
+      height: 52px;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    状态: <b id="status">连接中...</b>
+    <span style="margin-left: 12px;">当前时间戳: <b id="currentTimestamp">--</b></span>
+    <span style="margin-left: 12px;">说明: 最上方是总览图，下方每个闸门一个子图，左轴是 h1，右轴是 Q。</span>
+  </div>
+  <div class="control-panel" id="controlPanel">
+    <div class="control-header">
+      <span>计算控制面板</span>
+      <button class="toggle-btn" id="togglePanelBtn" type="button">-</button>
+    </div>
+    <div class="control-body">
+      <div class="button-row">
+        <button class="action-btn" id="startBtn" type="button">开始计算</button>
+        <button class="action-btn secondary" id="pauseBtn" type="button">暂停</button>
+        <button class="action-btn" id="resumeBtn" type="button">继续</button>
+        <button class="action-btn warn" id="restartBtn" type="button">重新计算</button>
+      </div>
+      <div class="panel-meta">
+        当前控制状态: <b id="runState">idle</b><br />
+        说明: 打开页面后，先点击“开始计算”。
+      </div>
+      <div class="upload-block">
+        <label class="upload-label" for="levelObsFile">选择实测水位 CSV</label>
+        <input class="upload-input" id="levelObsFile" type="file" accept=".csv" />
+        <div class="upload-status" id="levelObsStatus">支持 tidy / pivot 格式</div>
+
+        <label class="upload-label" for="flowObsFile">选择实测流量 CSV</label>
+        <input class="upload-input" id="flowObsFile" type="file" accept=".csv" />
+        <div class="upload-status" id="flowObsStatus">支持 tidy / pivot 格式</div>
+      </div>
+      <div class="history-block">
+        <div class="upload-label">历史案例</div>
+        <div class="upload-status" id="historyStatus">计算完成后会自动保存末时刻完整曲线快照</div>
+        <div class="history-list" id="historyList"></div>
+      </div>
+    </div>
+  </div>
+  <div class="memory-panel">
+    <div class="memory-title">后端内存占用</div>
+    <div class="memory-value"><span id="memoryValue">--</span> MB</div>
+    <div class="memory-meta">PID: <span id="memoryPid">--</span></div>
+    <div class="memory-title" style="margin-top: 8px;">前端内存占用</div>
+    <div class="memory-value"><span id="frontendMemoryValue">--</span> MB</div>
+    <div class="memory-meta" id="frontendMemoryMeta">浏览器检测中...</div>
+    <div id="memoryChart"></div>
+  </div>
+  <div id="overviewChart"></div>
+  <div id="chart"></div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const runStateEl = document.getElementById("runState");
+    const currentTimestampEl = document.getElementById("currentTimestamp");
+    const levelObsFileEl = document.getElementById("levelObsFile");
+    const flowObsFileEl = document.getElementById("flowObsFile");
+    const levelObsStatusEl = document.getElementById("levelObsStatus");
+    const flowObsStatusEl = document.getElementById("flowObsStatus");
+    const historyStatusEl = document.getElementById("historyStatus");
+    const historyListEl = document.getElementById("historyList");
+    const memoryValueEl = document.getElementById("memoryValue");
+    const memoryPidEl = document.getElementById("memoryPid");
+    const frontendMemoryValueEl = document.getElementById("frontendMemoryValue");
+    const frontendMemoryMetaEl = document.getElementById("frontendMemoryMeta");
+    const memoryChartEl = document.getElementById("memoryChart");
+    const overviewChartEl = document.getElementById("overviewChart");
+    const chartEl = document.getElementById("chart");
+    const controlPanelEl = document.getElementById("controlPanel");
+    const togglePanelBtn = document.getElementById("togglePanelBtn");
+    const ws = new WebSocket("ws://127.0.0.1:8765");
+
+    const traceIndexById = new Map();
+    const overviewTraceIndexById = new Map();
+    const memoryHistory = [];
+    const defaultObservedFiles = {
+      level: "/dayudu_new/input/stage1_td.csv",
+      flow: "/dayudu_new/input/action_obs_td.csv",
+    };
+    const HISTORY_API = {
+      list: "/api/history/list",
+      item: "/api/history/item",
+      save: "/api/history/save",
+      del: "/api/history/delete",
+    };
+    let currentGateNames = {};
+    let uploadedObserved = {
+      level: null,
+      flow: null,
+    };
+    let historyCases = [];
+    let lastSavedHistorySignature = null;
+    let defaultObservedLoaded = false;
+    let pendingFrame = null;
+    let renderScheduled = false;
+    let clearOnNextInit = true; // 首次init需要清空；用户主动触发重算时也置true
+
+    function formatLocalDateTime(dateObj) {
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const d = String(dateObj.getDate()).padStart(2, "0");
+      const hh = String(dateObj.getHours()).padStart(2, "0");
+      const mm = String(dateObj.getMinutes()).padStart(2, "0");
+      const ss = String(dateObj.getSeconds()).padStart(2, "0");
+      return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+    }
+
+    function toIsoTime(value) {
+      if (value === null || value === undefined || value === "") {
+        return null;
+      }
+      if (typeof value === "number") {
+        return formatLocalDateTime(new Date(value * 1000));
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return String(value);
+      }
+      return formatLocalDateTime(parsed);
+    }
+
+    function axisName(prefix, index) {
+      return index === 1 ? prefix : `${prefix}${index}`;
+    }
+
+    function axisRef(prefix, index) {
+      return index === 1 ? prefix : `${prefix}${index}`;
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    async function loadHistoryCases() {
+      try {
+        const payload = await fetchJson(HISTORY_API.list);
+        historyCases = Array.isArray(payload.items) ? payload.items : [];
+        renderHistoryList();
+      } catch (error) {
+        historyCases = [];
+        renderHistoryList();
+        historyStatusEl.textContent = `历史列表加载失败: ${error.message || error}`;
+      }
+    }
+
+    function renderHistoryList() {
+      if (!historyCases.length) {
+        historyListEl.innerHTML = '<div class="upload-status">暂无历史案例</div>';
+        return;
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function buildBoundaryBadge(item) {
+        const stats = item && item.boundaryStats ? item.boundaryStats : null;
+        const total = stats && Number.isFinite(Number(stats.total)) ? Number(stats.total) : 0;
+        const exists = stats && Number.isFinite(Number(stats.exists)) ? Number(stats.exists) : 0;
+        if (!total) {
+          return '<span class="history-badge unknown" title="历史文件未提供边界摘要">边界 未知</span>';
+        }
+        const missing = Array.isArray(stats.missing) ? stats.missing : [];
+        const cls = exists === total ? "ok" : "warn";
+        const tip = exists === total
+          ? "边界快照完整"
+          : `缺失: ${missing.join(", ") || "未知"}`;
+        return `<span class="history-badge ${cls}" title="${escapeHtml(tip)}">边界 ${exists}/${total}</span>`;
+      }
+
+      historyListEl.innerHTML = historyCases.map((item) => `
+        <div class="history-item">
+          <div class="history-title">${item.title}</div>
+          <div class="history-tags">${buildBoundaryBadge(item)}</div>
+          <div class="history-meta">保存时间: ${item.createdAt}<br />末时刻: ${item.lastTime || '--'}</div>
+          <div class="history-actions">
+            <button class="history-btn" data-action="show" data-id="${item.id}">展示</button>
+            <button class="history-btn delete" data-action="delete" data-id="${item.id}">删除</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    async function showHistoryCase(caseId) {
+      const selectedMeta = historyCases.find((item) => item.id === caseId);
+      if (!selectedMeta) {
+        return;
+      }
+      try {
+        const payload = await fetchJson(`${HISTORY_API.item}?id=${encodeURIComponent(caseId)}`);
+        const selected = payload.item || selectedMeta;
+        applyHistoryCase(selected);
+        historyStatusEl.textContent = `已加载历史案例: ${selected.title}`;
+        currentTimestampEl.textContent = selected.lastTime || "--";
+        setStatus(`历史案例展示中: ${selected.title}`);
+        setRunState("history");
+      } catch (error) {
+        historyStatusEl.textContent = `历史案例加载失败: ${error.message || error}`;
+      }
+    }
+
+    function applyHistoryCase(caseData) {
+      initChart(caseData.gateNames || {});
+
+      for (const [id, traceInfo] of traceIndexById.entries()) {
+        const gateSeries = (caseData.series || {})[id] || {};
+        Plotly.restyle(chartEl, {
+          x: [gateSeries.h1 ? gateSeries.h1.x : []],
+          y: [gateSeries.h1 ? gateSeries.h1.y : []],
+        }, [traceInfo.h1]);
+        Plotly.restyle(chartEl, {
+          x: [gateSeries.q ? gateSeries.q.x : []],
+          y: [gateSeries.q ? gateSeries.q.y : []],
+        }, [traceInfo.q]);
+      }
+
+      for (const [id, traceInfo] of overviewTraceIndexById.entries()) {
+        const gateSeries = (caseData.series || {})[id] || {};
+        Plotly.restyle(overviewChartEl, {
+          x: [gateSeries.h1 ? gateSeries.h1.x : []],
+          y: [gateSeries.h1 ? gateSeries.h1.y : []],
+        }, [traceInfo.h1]);
+        Plotly.restyle(overviewChartEl, {
+          x: [gateSeries.q ? gateSeries.q.x : []],
+          y: [gateSeries.q ? gateSeries.q.y : []],
+        }, [traceInfo.q]);
+      }
+    }
+
+    async function deleteHistoryCase(caseId) {
+      try {
+        await fetchJson(HISTORY_API.del, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: caseId }),
+        });
+        historyCases = historyCases.filter((item) => item.id !== caseId);
+        renderHistoryList();
+      } catch (error) {
+        historyStatusEl.textContent = `删除历史失败: ${error.message || error}`;
+      }
+    }
+
+    async function saveCurrentHistoryCase() {
+      if (!chartEl.data || !traceIndexById.size || !Object.keys(currentGateNames).length) {
+        return;
+      }
+      const lastTime = currentTimestampEl.textContent || "--";
+      const signature = `${lastTime}|${Object.keys(currentGateNames).length}`;
+      if (signature === lastSavedHistorySignature) {
+        return;
+      }
+
+      const series = {};
+      for (const [id, traceInfo] of traceIndexById.entries()) {
+        const h1Trace = chartEl.data[traceInfo.h1];
+        const qTrace = chartEl.data[traceInfo.q];
+        series[id] = {
+          h1: {
+            x: Array.from(h1Trace && h1Trace.x ? h1Trace.x : []),
+            y: Array.from(h1Trace && h1Trace.y ? h1Trace.y : []),
+          },
+          q: {
+            x: Array.from(qTrace && qTrace.x ? qTrace.x : []),
+            y: Array.from(qTrace && qTrace.y ? qTrace.y : []),
+          },
+        };
+      }
+
+      const now = new Date();
+      const historyCase = {
+        id: `case_${Date.now()}`,
+        title: `历史案例 ${now.toLocaleString()}`,
+        createdAt: now.toLocaleString(),
+        lastTime,
+        gateNames: currentGateNames,
+        series,
+      };
+
+      try {
+        await fetchJson(HISTORY_API.save, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(historyCase),
+        });
+        await loadHistoryCases();
+        historyStatusEl.textContent = `已保存历史案例(h5)，末时刻 ${lastTime}`;
+        lastSavedHistorySignature = signature;
+      } catch (error) {
+        historyStatusEl.textContent = `保存历史失败: ${error.message || error}`;
+      }
+    }
+
+    function normalizeGateName(name) {
+      const aliasMap = {
+        "麻原节制闸": "麻园节制闸",
+        "老庄节制闸": "总干渠老庄节制闸",
+        "17号桥节制闸": "17号桥节制闸",
+      };
+      const compact = String(name || "").replace(/\s+/g, "").trim();
+      return aliasMap[compact] || compact;
+    }
+
+    function buildGateIdByName(gateNames) {
+      const map = new Map();
+      for (const [id, name] of Object.entries(gateNames || {})) {
+        map.set(normalizeGateName(name), id);
+      }
+      return map;
+    }
+
+    function splitCsvLine(line) {
+      return line.split(",").map((item) => item.trim());
+    }
+
+    async function readCsvFile(file) {
+      const buffer = await file.arrayBuffer();
+      const utf8Text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+      if (!utf8Text.includes("�")) {
+        return utf8Text;
+      }
+      try {
+        return new TextDecoder("gbk", { fatal: false }).decode(buffer);
+      } catch {
+        return utf8Text;
+      }
+    }
+
+    async function readCsvUrl(url) {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const buffer = await response.arrayBuffer();
+      const utf8Text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+      if (!utf8Text.includes("�")) {
+        return utf8Text;
+      }
+      try {
+        return new TextDecoder("gbk", { fatal: false }).decode(buffer);
+      } catch {
+        return utf8Text;
+      }
+    }
+
+    function parseObservedCsv(text, gateNames) {
+      const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.length < 2) {
+        return new Map();
+      }
+
+      const headers = splitCsvLine(lines[0]);
+      const lowerHeaders = headers.map((header) => header.toLowerCase());
+      const gateIdByName = buildGateIdByName(gateNames);
+      const seriesById = new Map();
+
+      const ensureSeries = (gateId) => {
+        if (!seriesById.has(gateId)) {
+          seriesById.set(gateId, { x: [], y: [] });
+        }
+        return seriesById.get(gateId);
+      };
+
+      const tmIdx = lowerHeaders.findIndex((value) => value === "tm" || value === "time" || value === "point/time");
+      const objIdx = lowerHeaders.findIndex((value) => value === "obj" || value === "name" || value === "gate" || value === "point");
+      const valueIdx = lowerHeaders.findIndex((value) => value === "value");
+      const isTidy = tmIdx >= 0 && objIdx >= 0 && valueIdx >= 0;
+
+      if (isTidy) {
+        for (const line of lines.slice(1)) {
+          const cols = splitCsvLine(line);
+          const gateName = normalizeGateName(cols[objIdx]);
+          const gateId = gateIdByName.get(gateName);
+          const value = Number(cols[valueIdx]);
+          const timeValue = toIsoTime(cols[tmIdx]);
+          if (!gateId || Number.isNaN(value)) {
+            continue;
+          }
+          const series = ensureSeries(gateId);
+          series.x.push(timeValue || series.x.length);
+          series.y.push(value);
+        }
+        return seriesById;
+      }
+
+      const timeColIndex = tmIdx >= 0 ? tmIdx : 0;
+      const gateColumns = headers.map((header, index) => ({ header, index }))
+        .filter(({ index }) => index !== timeColIndex)
+        .map(({ header, index }) => ({ gateId: gateIdByName.get(normalizeGateName(header)), index }))
+        .filter(({ gateId }) => Boolean(gateId));
+
+      lines.slice(1).forEach((line, rowIndex) => {
+        const cols = splitCsvLine(line);
+        const timeValue = toIsoTime(cols[timeColIndex]);
+        gateColumns.forEach(({ gateId, index }) => {
+          const value = Number(cols[index]);
+          if (Number.isNaN(value)) {
+            return;
+          }
+          const series = ensureSeries(gateId);
+          series.x.push(timeValue || rowIndex);
+          series.y.push(value);
+        });
+      });
+
+      return seriesById;
+    }
+
+    function applyObservedSeries(kind) {
+      const observedSeries = uploadedObserved[kind];
+      if (!observedSeries || !traceIndexById.size) {
+        return;
+      }
+
+      for (const [id, traceInfo] of traceIndexById.entries()) {
+        const obsTraceIndex = kind === "level" ? traceInfo.h1Obs : traceInfo.qObs;
+        const series = observedSeries.get(id) || { x: [], y: [] };
+        Plotly.restyle(chartEl, {
+          x: [series.x],
+          y: [series.y],
+          visible: [series.y.length ? true : "legendonly"],
+        }, [obsTraceIndex]);
+      }
+    }
+
+    async function handleObservedFile(kind, file, statusEl) {
+      if (!file) {
+        return;
+      }
+      if (!Object.keys(currentGateNames).length) {
+        statusEl.textContent = "请先等待页面初始化完成";
+        return;
+      }
+      statusEl.textContent = `加载中: ${file.name}`;
+      try {
+        const text = await readCsvFile(file);
+        uploadedObserved[kind] = parseObservedCsv(text, currentGateNames);
+        applyObservedSeries(kind);
+        statusEl.textContent = `已加载 ${file.name}，匹配 ${uploadedObserved[kind].size} 个闸门`;
+      } catch (error) {
+        statusEl.textContent = `加载失败: ${error.message || error}`;
+      }
+    }
+
+    async function loadDefaultObservedFiles() {
+      if (defaultObservedLoaded || !Object.keys(currentGateNames).length) {
+        return;
+      }
+      defaultObservedLoaded = true;
+
+      try {
+        levelObsStatusEl.textContent = `默认加载中: ${defaultObservedFiles.level}`;
+        const levelText = await readCsvUrl(defaultObservedFiles.level);
+        uploadedObserved.level = parseObservedCsv(levelText, currentGateNames);
+        applyObservedSeries("level");
+        levelObsStatusEl.textContent = `默认已加载 stage1_td.csv，匹配 ${uploadedObserved.level.size} 个闸门`;
+      } catch (error) {
+        levelObsStatusEl.textContent = `默认水位加载失败: ${error.message || error}`;
+      }
+
+      try {
+        flowObsStatusEl.textContent = `默认加载中: ${defaultObservedFiles.flow}`;
+        const flowText = await readCsvUrl(defaultObservedFiles.flow);
+        uploadedObserved.flow = parseObservedCsv(flowText, currentGateNames);
+        applyObservedSeries("flow");
+        flowObsStatusEl.textContent = `默认已加载 action_obs_td.csv，匹配 ${uploadedObserved.flow.size} 个闸门`;
+      } catch (error) {
+        flowObsStatusEl.textContent = `默认流量加载失败: ${error.message || error}`;
+      }
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function setRunState(state) {
+      runStateEl.textContent = state;
+    }
+
+    function initMemoryChart() {
+      Plotly.newPlot(memoryChartEl, [{
+        x: [],
+        y: [],
+        mode: "lines",
+        type: "scatter",
+        line: { color: "#16a34a", width: 1.5 },
+        fill: "tozeroy",
+        fillcolor: "rgba(34, 197, 94, 0.12)",
+        hovertemplate: "%{y:.2f} MB<extra></extra>",
+      }], {
+        margin: { l: 8, r: 8, t: 4, b: 8 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { visible: false },
+        yaxis: { visible: false, fixedrange: true },
+      }, {
+        staticPlot: true,
+        displayModeBar: false,
+        responsive: true,
+      });
+    }
+
+    function updateMemoryPanel(msg) {
+      const value = Number(msg.rss_mb || 0);
+      memoryValueEl.textContent = value.toFixed(2);
+      memoryPidEl.textContent = msg.pid || "--";
+      memoryHistory.push(value);
+      if (memoryHistory.length > 40) {
+        memoryHistory.shift();
+      }
+      Plotly.react(memoryChartEl, [{
+        x: memoryHistory.map((_, index) => index),
+        y: memoryHistory,
+        mode: "lines",
+        type: "scatter",
+        line: { color: "#16a34a", width: 1.5 },
+        fill: "tozeroy",
+        fillcolor: "rgba(34, 197, 94, 0.12)",
+        hovertemplate: "%{y:.2f} MB<extra></extra>",
+      }], {
+        margin: { l: 8, r: 8, t: 4, b: 8 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { visible: false },
+        yaxis: { visible: false, fixedrange: true },
+      }, {
+        staticPlot: true,
+        displayModeBar: false,
+        responsive: true,
+      });
+    }
+
+    function updateFrontendMemoryPanel() {
+      const perfMemory = performance && performance.memory;
+      if (!perfMemory || typeof perfMemory.usedJSHeapSize !== "number") {
+        frontendMemoryValueEl.textContent = "--";
+        frontendMemoryMetaEl.textContent = "浏览器不支持 performance.memory";
+        return;
+      }
+
+      const usedMb = perfMemory.usedJSHeapSize / (1024 * 1024);
+      const totalMb = perfMemory.totalJSHeapSize / (1024 * 1024);
+      frontendMemoryValueEl.textContent = usedMb.toFixed(2);
+      frontendMemoryMetaEl.textContent = `JS Heap: ${usedMb.toFixed(2)} / ${totalMb.toFixed(2)} MB`;
+    }
+
+    function sendCommand(action) {
+      if (ws.readyState !== WebSocket.OPEN) {
+        setStatus("WebSocket 未连接，无法发送控制命令");
+        return;
+      }
+      ws.send(JSON.stringify({ type: "command", action }));
+    }
+
+    function initOverviewChart(gateNames) {
+      overviewTraceIndexById.clear();
+      const ids = Object.keys(gateNames || {}).sort((a, b) => Number(a) - Number(b));
+      const traces = ids.flatMap((id, index) => {
+        const h1TraceIndex = index * 2;
+        const qTraceIndex = h1TraceIndex + 1;
+        overviewTraceIndexById.set(id, { h1: h1TraceIndex, q: qTraceIndex });
+        return [
+          {
+            x: [],
+            y: [],
+            mode: "lines",
+            type: "scattergl",
+            name: index === 0 ? "总览 h1" : `${id}:${gateNames[id] || id} h1`,
+            line: { width: 1, color: "rgba(37, 99, 235, 0.32)" },
+            hovertemplate: `${id}:${gateNames[id] || id} h1<br>%{x}<br>%{y:.3f}<extra></extra>`,
+            yaxis: "y",
+            showlegend: index === 0,
+            legendgroup: "overview-h1",
+          },
+          {
+            x: [],
+            y: [],
+            mode: "lines",
+            type: "scattergl",
+            name: index === 0 ? "总览 Q" : `${id}:${gateNames[id] || id} Q`,
+            line: { width: 1, color: "rgba(234, 88, 12, 0.28)", dash: "dot" },
+            hovertemplate: `${id}:${gateNames[id] || id} Q<br>%{x}<br>%{y:.3f}<extra></extra>`,
+            yaxis: "y2",
+            showlegend: index === 0,
+            legendgroup: "overview-q",
+          },
+        ];
+      });
+
+      Plotly.newPlot(overviewChartEl, traces, {
+        title: "总览曲线",
+        showlegend: true,
+        legend: {
+          orientation: "h",
+          x: 0,
+          y: 1.12,
+          xanchor: "left",
+          yanchor: "bottom",
+        },
+        margin: { l: 50, r: 50, t: 72, b: 36 },
+        height: 300,
+        xaxis: {
+          title: "time",
+          type: "date",
+          tickformat: "%m-%d %H:%M",
+          hoverformat: "%Y-%m-%d %H:%M:%S",
+        },
+        yaxis: {
+          title: "h1",
+          side: "left",
+        },
+        yaxis2: {
+          title: "Q",
+          overlaying: "y",
+          side: "right",
+        },
+      }, {
+        responsive: true,
+        displaylogo: false,
+      });
+    }
+
+    function initChart(gateNames) {
+      currentGateNames = gateNames || {};
+      traceIndexById.clear();
+      initOverviewChart(gateNames);
+      const ids = Object.keys(gateNames).sort((a, b) => Number(a) - Number(b));
+      const cols = 3;
+      const rows = Math.ceil(ids.length / cols);
+      const hGap = 0.04;
+      const vGap = 0.05;
+      const cellW = (1 - hGap * (cols - 1)) / cols;
+      const cellH = (1 - vGap * (rows - 1)) / rows;
+      const layout = {
+        title: "gates_h1 / gates_Q 实时过程线",
+        showlegend: true,
+        legend: {
+          orientation: "h",
+          x: 0,
+          y: 1.06,
+          xanchor: "left",
+          yanchor: "bottom",
+        },
+        margin: { l: 50, r: 16, t: 84, b: 45 },
+        annotations: [],
+        height: Math.max(520, rows * 240),
+      };
+      chartEl.style.height = `${layout.height}px`;
+
+      const traces = ids.flatMap((id, index) => {
+        const subplotIndex = index + 1;
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        const x0 = col * (cellW + hGap);
+        const x1 = x0 + cellW;
+        const y1 = 1 - row * (cellH + vGap);
+        const y0 = y1 - cellH;
+        const xKey = axisName("xaxis", subplotIndex);
+        const yKey = axisName("yaxis", subplotIndex);
+        const y2Key = axisName("yaxis", ids.length + subplotIndex);
+
+        layout[xKey] = {
+          domain: [x0, x1],
+          anchor: axisRef("y", subplotIndex),
+          title: row === rows - 1 ? "time" : undefined,
+          type: "date",
+          tickformat: "%m-%d %H:%M",
+          hoverformat: "%Y-%m-%d %H:%M:%S",
+        };
+        layout[yKey] = {
+          domain: [y0, y1],
+          anchor: axisRef("x", subplotIndex),
+          title: col === 0 ? "h1" : undefined,
+          side: "left",
+        };
+        layout[y2Key] = {
+          domain: [y0, y1],
+          anchor: axisRef("x", subplotIndex),
+          overlaying: axisRef("y", subplotIndex),
+          side: "right",
+          title: col === cols - 1 || (row === 0 && col === ids.length - 1) ? "Q" : undefined,
+        };
+        layout.annotations.push({
+          text: `${id}:${gateNames[id] || id}`,
+          x: (x0 + x1) / 2,
+          y: y1 + 0.01,
+          xref: "paper",
+          yref: "paper",
+          showarrow: false,
+          font: { size: 11 },
+        });
+
+        const h1TraceIndex = index * 4;
+        const qTraceIndex = h1TraceIndex + 1;
+        const h1ObsTraceIndex = h1TraceIndex + 2;
+        const qObsTraceIndex = h1TraceIndex + 3;
+        traceIndexById.set(id, { h1: h1TraceIndex, q: qTraceIndex, h1Obs: h1ObsTraceIndex, qObs: qObsTraceIndex });
+        return [
+          {
+            x: [],
+            y: [],
+            mode: "lines",
+            type: "scattergl",
+            name: "仿真 h1",
+            line: { width: 1.2, color: "#2563eb" },
+            xaxis: axisRef("x", subplotIndex),
+            yaxis: axisRef("y", subplotIndex),
+            showlegend: index === 0,
+            legendgroup: "sim-h1",
+          },
+          {
+            x: [],
+            y: [],
+            mode: "lines",
+            type: "scattergl",
+            name: "仿真 Q",
+            line: { width: 1.2, color: "#ea580c", dash: "dot" },
+            xaxis: axisRef("x", subplotIndex),
+            yaxis: axisRef("y", ids.length + subplotIndex),
+            showlegend: index === 0,
+            legendgroup: "sim-q",
+          },
+          {
+            x: [],
+            y: [],
+            mode: "markers",
+            type: "scattergl",
+            name: "实测 h1",
+            marker: { size: 5, color: "#0f766e", symbol: "circle-open" },
+            xaxis: axisRef("x", subplotIndex),
+            yaxis: axisRef("y", subplotIndex),
+            visible: "legendonly",
+            showlegend: index === 0,
+            legendgroup: "obs-h1",
+          },
+          {
+            x: [],
+            y: [],
+            mode: "markers",
+            type: "scattergl",
+            name: "实测 Q",
+            marker: { size: 5, color: "#b45309", symbol: "diamond-open" },
+            xaxis: axisRef("x", subplotIndex),
+            yaxis: axisRef("y", ids.length + subplotIndex),
+            visible: "legendonly",
+            showlegend: index === 0,
+            legendgroup: "obs-q",
+          },
+        ];
+      });
+
+      Plotly.newPlot(chartEl, traces, layout, {
+        responsive: true,
+        displaylogo: false,
+      });
+
+      applyObservedSeries("level");
+      applyObservedSeries("flow");
+      loadDefaultObservedFiles();
+    }
+
+    function appendFrame(frame) {
+      const xValue = frame.time || toIsoTime(frame.ts) || frame.k;
+      const indices = [];
+      const xBatch = [];
+      const yBatch = [];
+      const overviewIndices = [];
+      const overviewXBatch = [];
+      const overviewYBatch = [];
+
+      for (const [id, traceInfo] of traceIndexById.entries()) {
+        const h1 = (frame.h1 || {})[id];
+        const q = (frame.q || {})[id];
+        const overviewTraceInfo = overviewTraceIndexById.get(id);
+        if (h1 !== undefined) {
+          indices.push(traceInfo.h1);
+          xBatch.push([xValue]);
+          yBatch.push([Number(h1)]);
+          if (overviewTraceInfo) {
+            overviewIndices.push(overviewTraceInfo.h1);
+            overviewXBatch.push([xValue]);
+            overviewYBatch.push([Number(h1)]);
+          }
+        }
+        if (q !== undefined) {
+          indices.push(traceInfo.q);
+          xBatch.push([xValue]);
+          yBatch.push([Number(q)]);
+          if (overviewTraceInfo) {
+            overviewIndices.push(overviewTraceInfo.q);
+            overviewXBatch.push([xValue]);
+            overviewYBatch.push([Number(q)]);
+          }
+        }
+      }
+
+      if (!indices.length) {
+        return;
+      }
+
+      Plotly.extendTraces(chartEl, {
+        x: xBatch,
+        y: yBatch,
+      }, indices, 5000);
+      if (overviewIndices.length) {
+        Plotly.extendTraces(overviewChartEl, {
+          x: overviewXBatch,
+          y: overviewYBatch,
+        }, overviewIndices, 5000);
+      }
+    }
+
+    function scheduleLatestFrameRender() {
+      if (renderScheduled) {
+        return;
+      }
+      renderScheduled = true;
+      requestAnimationFrame(() => {
+        const frame = pendingFrame;
+        pendingFrame = null;
+        if (frame) {
+          appendFrame(frame);
+          currentTimestampEl.textContent = frame.time || toIsoTime(frame.ts) || "--";
+          setStatus(`实时更新中 k=${frame.k}`);
+        }
+        renderScheduled = false;
+        if (pendingFrame) {
+          scheduleLatestFrameRender();
+        }
+      });
+    }
+
+    togglePanelBtn.addEventListener("click", () => {
+      controlPanelEl.classList.toggle("collapsed");
+      togglePanelBtn.textContent = controlPanelEl.classList.contains("collapsed") ? "+" : "-";
+    });
+
+    document.getElementById("startBtn").addEventListener("click", () => { clearOnNextInit = true; sendCommand("start"); });
+    document.getElementById("pauseBtn").addEventListener("click", () => sendCommand("pause"));
+    document.getElementById("resumeBtn").addEventListener("click", () => sendCommand("resume"));
+    document.getElementById("restartBtn").addEventListener("click", () => { clearOnNextInit = true; sendCommand("restart"); });
+    levelObsFileEl.addEventListener("change", (event) => handleObservedFile("level", event.target.files[0], levelObsStatusEl));
+    flowObsFileEl.addEventListener("change", (event) => handleObservedFile("flow", event.target.files[0], flowObsStatusEl));
+    historyListEl.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) {
+        return;
+      }
+      const caseId = button.getAttribute("data-id");
+      const action = button.getAttribute("data-action");
+      if (action === "show") {
+        showHistoryCase(caseId);
+      } else if (action === "delete") {
+        deleteHistoryCase(caseId);
+      }
+    });
+
+    loadHistoryCases();
+
+    initMemoryChart();
+    updateFrontendMemoryPanel();
+    setInterval(updateFrontendMemoryPanel, 1000);
+
+    ws.onopen = () => setStatus("WebSocket 已连接");
+    ws.onclose = () => setStatus("WebSocket 已断开");
+    ws.onerror = () => setStatus("WebSocket 错误");
+
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "init") {
+        if (clearOnNextInit) {
+          clearOnNextInit = false;
+          defaultObservedLoaded = false;
+          initChart(msg.gateNames || {});
+        } else {
+          currentGateNames = msg.gateNames || {};
+        }
+        currentTimestampEl.textContent = msg.timeParam && msg.timeParam.start_time ? msg.timeParam.start_time : "--";
+        setStatus("已初始化，等待实时数据...");
+      } else if (msg.type === "frame") {
+        pendingFrame = msg;
+        scheduleLatestFrameRender();
+      } else if (msg.type === "control_state") {
+        setRunState(msg.state || "unknown");
+      } else if (msg.type === "memory") {
+        updateMemoryPanel(msg);
+      } else if (msg.type === "done") {
+        setStatus("仿真完成");
+        setRunState("done");
+        saveCurrentHistoryCase();
+      }
+    };
+  </script>
+</body>
+</html>
