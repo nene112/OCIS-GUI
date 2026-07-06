@@ -10,7 +10,7 @@
       padding: 16px;
       background: #f8fafc;
       color: #0f172a;
-      font-family: Microsoft YaHei, sans-serif;
+      font-family: "Microsoft YaHei", sans-serif;
     }
     .standalone-head {
       position: sticky;
@@ -34,6 +34,7 @@
       margin-top: 8px;
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 8px;
       font-size: 12px;
       color: #334155;
@@ -42,7 +43,8 @@
       font-weight: 600;
       color: #0f172a;
     }
-    .standalone-head-controls select {
+    .standalone-head-controls select,
+    .standalone-head-controls input {
       border: 1px solid rgba(148, 163, 184, 0.65);
       border-radius: 8px;
       background: #fff;
@@ -50,7 +52,74 @@
       font-size: 12px;
       line-height: 1.4;
       padding: 2px 8px;
+      box-sizing: border-box;
+    }
+    .standalone-head-controls select {
       min-width: 64px;
+    }
+    .standalone-head-controls input {
+      width: 72px;
+    }
+    .standalone-head-controls button {
+      border: 1px solid rgba(15, 118, 110, 0.35);
+      border-radius: 999px;
+      background: #0f766e;
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 4px 12px;
+      cursor: pointer;
+    }
+    .standalone-head-controls button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+    .search-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      min-width: 220px;
+    }
+    .search-wrap input {
+      width: 220px;
+    }
+    .search-suggest {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 20;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+      max-height: 240px;
+      overflow-y: auto;
+      display: none;
+    }
+    .search-suggest.show {
+      display: block;
+    }
+    .search-suggest-item {
+      display: block;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 8px 10px;
+      color: #0f172a;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .search-suggest-item:hover,
+    .search-suggest-item.active {
+      background: rgba(15, 118, 110, 0.08);
+    }
+    .search-suggest-item small {
+      display: block;
+      color: #64748b;
+      margin-top: 2px;
     }
     .chart-list {
       display: grid;
@@ -73,6 +142,10 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
+    }
+    .detail-chart-card.gate-active {
+      border-color: rgba(220, 38, 38, 0.55);
+      box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18), 0 2px 10px rgba(15, 23, 42, 0.08);
     }
     .detail-chart-head {
       display: flex;
@@ -113,6 +186,11 @@
       .standalone-head h1 {
         font-size: 14px;
       }
+      .search-wrap,
+      .search-wrap input {
+        min-width: 100%;
+        width: 100%;
+      }
     }
   </style>
   <script src="/vendor/plotly-2.35.2.min.js"></script>
@@ -131,17 +209,73 @@
         <option value="5">5</option>
         <option value="6">6</option>
       </select>
+      <label for="fontSizeInput">字号</label>
+      <input id="fontSizeInput" type="number" min="8" max="32" step="1" value="10" />
+      <label for="gateSearchInput">搜索闸门</label>
+      <div class="search-wrap">
+        <input id="gateSearchInput" type="text" placeholder="输入闸门名，自动匹配" autocomplete="off" />
+        <div id="gateSearchSuggest" class="search-suggest"></div>
+      </div>
+      <label for="legendShowSelect">图例</label>
+      <select id="legendShowSelect">
+        <option value="1">显示</option>
+        <option value="0">隐藏</option>
+      </select>
+      <label for="legendOrientationSelect">方向</label>
+      <select id="legendOrientationSelect">
+        <option value="h">横向</option>
+        <option value="v">纵向</option>
+      </select>
+      <label for="legendXInput">图例X</label>
+      <input id="legendXInput" type="number" min="0" max="1.2" step="0.01" value="0" />
+      <label for="legendYInput">图例Y</label>
+      <input id="legendYInput" type="number" min="0" max="1.6" step="0.01" value="1.2" />
+      <label for="exportDpiSelect">导出DPI</label>
+      <select id="exportDpiSelect">
+        <option value="150">150</option>
+        <option value="300" selected>300</option>
+        <option value="600">600</option>
+      </select>
+      <button id="exportImageBtn" type="button">导出图片</button>
     </div>
   </div>
   <div class="chart-list" id="chartList"></div>
 
   <script>
     function escapeHtml(value) {
-      return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function safeNum(value, fallback) {
+      var n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function normalizeColumnCount(value) {
+      var n = Number(value);
+      if (!Number.isFinite(n)) return 1;
+      n = Math.round(n);
+      if (n < 1) n = 1;
+      if (n > 6) n = 6;
+      return n;
+    }
+
+    function normalizeFontSize(value) {
+      var n = Math.round(safeNum(value, 10));
+      if (n < 8) n = 8;
+      if (n > 32) n = 32;
+      return n;
+    }
+
+    function normalizeSearchText(value) {
+      return String(value || "")
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[（）()\-_,.]/g, "");
     }
 
     function buildPlotPoints(series, timeline) {
@@ -155,31 +289,107 @@
         if (!Number.isFinite(v)) continue;
         y.push(v);
         x.push(i + 1);
-        t.push(String(labels[i] || ''));
+        t.push(String(labels[i] || ""));
       }
       return { x: x, y: y, t: t };
     }
 
     var currentSpecs = [];
+    var currentPayload = null;
+    var currentSearchResults = [];
+    var currentSearchActiveIndex = -1;
 
-    function normalizeColumnCount(value) {
-      var n = Number(value);
-      if (!Number.isFinite(n)) return 1;
-      n = Math.round(n);
-      if (n < 1) n = 1;
-      if (n > 6) n = 6;
-      return n;
+    function buildGateSearchIndex(specs) {
+      return (Array.isArray(specs) ? specs : []).map(function(spec, index) {
+        var title = String((spec && spec.title) || "").trim();
+        var subtitle = String((spec && spec.subtitle) || "").trim();
+        var meta = String((spec && spec.headerMeta) || "").trim();
+        return {
+          index: index,
+          title: title,
+          subtitle: subtitle,
+          meta: meta,
+          searchKey: normalizeSearchText(title),
+          extraKey: normalizeSearchText(title + " " + subtitle + " " + meta)
+        };
+      }).filter(function(item) {
+        return !!item.title;
+      });
+    }
+
+    function scoreGateSearch(item, query) {
+      if (!query) return -1;
+      if (item.searchKey === query) return 1000;
+      var idx = item.searchKey.indexOf(query);
+      if (idx >= 0) return 800 - idx;
+      idx = item.extraKey.indexOf(query);
+      if (idx >= 0) return 500 - idx;
+
+      var pos = -1;
+      var matched = 0;
+      for (var i = 0; i < query.length; i += 1) {
+        var nextPos = item.searchKey.indexOf(query.charAt(i), pos + 1);
+        if (nextPos < 0) break;
+        pos = nextPos;
+        matched += 1;
+      }
+      if (!matched) return -1;
+      return matched * 10 - (pos < 0 ? 0 : pos);
+    }
+
+    function getChartSettings() {
+      var legendOrientation = String((document.getElementById("legendOrientationSelect") || {}).value || "h");
+      if (legendOrientation !== "v") legendOrientation = "h";
+      return {
+        fontSize: normalizeFontSize((document.getElementById("fontSizeInput") || {}).value),
+        showLegend: String((document.getElementById("legendShowSelect") || {}).value || "1") === "1",
+        legendOrientation: legendOrientation,
+        legendX: Math.max(0, Math.min(1.2, safeNum((document.getElementById("legendXInput") || {}).value, 0))),
+        legendY: Math.max(0, Math.min(1.6, safeNum((document.getElementById("legendYInput") || {}).value, 1.2)))
+      };
+    }
+
+    function buildPlotLayout(spec, settings) {
+      var fontSize = settings.fontSize;
+      return {
+        margin: { l: 44, r: 12, t: 0, b: 28 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(15,118,110,0.04)",
+        showlegend: settings.showLegend,
+        legend: {
+          orientation: settings.legendOrientation,
+          x: settings.legendX,
+          y: settings.legendY,
+          font: { size: Math.max(9, fontSize) }
+        },
+        xaxis: {
+          title: { text: "时间步序号", standoff: 2, font: { size: fontSize } },
+          tickfont: { size: fontSize, color: "#64748b" },
+          showgrid: true,
+          gridcolor: "rgba(148,163,184,0.18)",
+          zeroline: false,
+          automargin: true
+        },
+        yaxis: {
+          title: { text: String((spec && spec.yUnit) || ""), standoff: 4, font: { size: fontSize } },
+          tickfont: { size: fontSize, color: "#64748b" },
+          showgrid: true,
+          gridcolor: "rgba(148,163,184,0.22)",
+          zeroline: false,
+          nticks: 5,
+          automargin: true
+        }
+      };
     }
 
     function setChartColumns(columnCount) {
-      var chartListEl = document.getElementById('chartList');
+      var chartListEl = document.getElementById("chartList");
       if (!chartListEl) return;
       var cols = normalizeColumnCount(columnCount);
-      chartListEl.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
-
+      chartListEl.style.gridTemplateColumns = "repeat(" + cols + ", minmax(0, 1fr))";
       if (window.Plotly) {
         window.requestAnimationFrame(function() {
-          var plots = chartListEl.querySelectorAll('.detail-chart-plot');
+          var plots = chartListEl.querySelectorAll(".detail-chart-plot");
           plots.forEach(function(host) {
             try {
               Plotly.Plots.resize(host);
@@ -191,18 +401,14 @@
 
     function resolveDefaultColumns(payload) {
       var fromPayload = payload && payload.defaultColumns;
-      if (Number.isFinite(Number(fromPayload))) {
-        return normalizeColumnCount(fromPayload);
-      }
-      var title = String((payload && payload.title) || '');
-      if (title.indexOf('水位') >= 0) {
-        return 4;
-      }
+      if (Number.isFinite(Number(fromPayload))) return normalizeColumnCount(fromPayload);
+      var title = String((payload && payload.title) || "");
+      if (title.indexOf("水位") >= 0) return 4;
       return 2;
     }
 
     function renderSpecs(specs) {
-      var chartListEl = document.getElementById('chartList');
+      var chartListEl = document.getElementById("chartList");
       var list = Array.isArray(specs) ? specs : [];
       if (!list.length) {
         chartListEl.innerHTML = '<div class="chart-empty">当前无图表可展示。</div>';
@@ -210,25 +416,24 @@
       }
 
       var html = list.map(function(spec, index) {
-        var plotId = 'standalone-plot-' + index;
+        var plotId = "standalone-plot-" + index;
         var title = escapeHtml(spec && spec.title);
         var subtitle = escapeHtml(spec && spec.subtitle);
         var meta = escapeHtml(spec && spec.headerMeta);
         return [
-          '<div class="detail-chart-card">',
-          '<div class="detail-chart-head"><p class="detail-chart-title">' + title + (subtitle ? ('（' + subtitle + '）') : '') + '</p>' + (meta ? ('<span class="detail-chart-title-meta">' + meta + '</span>') : '') + '</div>',
+          '<div class="detail-chart-card" data-gate-index="' + index + '" data-gate-title="' + title + '">',
+          '<div class="detail-chart-head"><p class="detail-chart-title">' + title + (subtitle ? ("（" + subtitle + "）") : "") + '</p>' + (meta ? ('<span class="detail-chart-title-meta">' + meta + "</span>") : "") + "</div>",
           '<div id="' + plotId + '" class="detail-chart-plot"></div>',
-          '</div>'
-        ].join('');
-      }).join('');
+          "</div>"
+        ].join("");
+      }).join("");
       chartListEl.innerHTML = html;
 
-      if (!window.Plotly) {
-        return;
-      }
+      if (!window.Plotly) return;
 
+      var settings = getChartSettings();
       list.forEach(function(spec, index) {
-        var host = document.getElementById('standalone-plot-' + index);
+        var host = document.getElementById("standalone-plot-" + index);
         if (!host) return;
 
         var traces = [];
@@ -240,17 +445,17 @@
             x: points.x,
             y: points.y,
             customdata: points.t,
-            type: 'scatter',
-            mode: String((series && series.mode) || 'lines'),
-            name: String((series && series.label) || ''),
-            hovertemplate: '步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>',
+            type: "scatter",
+            mode: String((series && series.mode) || "lines"),
+            name: String((series && series.label) || ""),
+            hovertemplate: "步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>",
             line: {
-              color: String((series && series.color) || '#0f766e'),
+              color: String((series && series.color) || "#0f766e"),
               width: 2,
-              dash: String((series && series.dash) || 'solid')
+              dash: String((series && series.dash) || "solid")
             },
             marker: {
-              color: String((series && (series.markerColor || series.color)) || '#0f766e'),
+              color: String((series && (series.markerColor || series.color)) || "#0f766e"),
               size: Number((series && series.markerSize) || 5)
             }
           });
@@ -261,91 +466,388 @@
           return;
         }
 
-        Plotly.newPlot(host, traces, {
-          margin: { l: 44, r: 12, t: 0, b: 28 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(15,118,110,0.04)',
-          showlegend: true,
-          legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 10 } },
-          xaxis: {
-            title: { text: '时间步序号', standoff: 2, font: { size: 10 } },
-            tickfont: { size: 10, color: '#64748b' },
-            showgrid: true,
-            gridcolor: 'rgba(148,163,184,0.18)',
-            zeroline: false,
-            automargin: true
-          },
-          yaxis: {
-            title: { text: String((spec && spec.yUnit) || ''), standoff: 4, font: { size: 10 } },
-            tickfont: { size: 10, color: '#64748b' },
-            showgrid: true,
-            gridcolor: 'rgba(148,163,184,0.22)',
-            zeroline: false,
-            nticks: 5,
-            automargin: true
-          }
-        }, {
+        Plotly.newPlot(host, traces, buildPlotLayout(spec, settings), {
           displayModeBar: false,
           responsive: true,
           staticPlot: false,
-          locale: 'zh-CN'
+          locale: "zh-CN"
         });
       });
     }
 
-    function bootstrap() {
-      var params = new URLSearchParams(window.location.search || '');
-      var key = params.get('chartsKey') || '';
-      if (!key) {
-        document.getElementById('chartList').innerHTML = '<div class="chart-empty">缺少 chartsKey 参数。</div>';
-        return;
-      }
+    function updatePlotAppearance() {
+      if (!window.Plotly) return;
+      var settings = getChartSettings();
+      currentSpecs.forEach(function(spec, index) {
+        var host = document.getElementById("standalone-plot-" + index);
+        if (!host) return;
+        try {
+          Plotly.relayout(host, buildPlotLayout(spec, settings));
+        } catch (_) {}
+      });
+    }
 
-      var raw = '';
+    function hideSearchSuggest() {
+      var suggestEl = document.getElementById("gateSearchSuggest");
+      if (!suggestEl) return;
+      suggestEl.classList.remove("show");
+      suggestEl.innerHTML = "";
+      currentSearchResults = [];
+      currentSearchActiveIndex = -1;
+    }
+
+    function setActiveSearchSuggestItem(activeIndex) {
+      currentSearchActiveIndex = activeIndex;
+      var suggestEl = document.getElementById("gateSearchSuggest");
+      if (!suggestEl) return;
+      var items = suggestEl.querySelectorAll(".search-suggest-item");
+      items.forEach(function(item, index) {
+        item.classList.toggle("active", index === activeIndex);
+      });
+    }
+
+    function syncGateHighlightToOpener(gateName) {
       try {
-        raw = localStorage.getItem(key) || '';
-      } catch (e) {
-        raw = '';
-      }
-      if (!raw) {
-        document.getElementById('chartList').innerHTML = '<div class="chart-empty">未找到图表数据，可能已过期。请返回主页面重新点击“全部图表”。</div>';
-        return;
-      }
+        if (!window.opener || window.opener.closed) return;
+        if (typeof window.opener.renderSelectionCharts === "function") {
+          window.opener.renderSelectionCharts(gateName);
+          return;
+        }
+        if (typeof window.opener.setActiveGateFlowCard === "function") {
+          window.opener.setActiveGateFlowCard(gateName);
+        }
+      } catch (_) {}
+    }
 
-      var payload = null;
+    function highlightGateCard(targetIndex, syncToOpener) {
+      var idx = Number(targetIndex);
+      if (!Number.isFinite(idx) || idx < 0) return;
+      var cards = document.querySelectorAll(".detail-chart-card[data-gate-index]");
+      var targetCard = null;
+      cards.forEach(function(card) {
+        var cardIndex = Number(card.getAttribute("data-gate-index"));
+        var isActive = cardIndex === idx;
+        card.classList.toggle("gate-active", isActive);
+        if (isActive) targetCard = card;
+      });
+      if (!targetCard) return;
       try {
-        payload = JSON.parse(raw);
-      } catch (e) {
-        payload = null;
+        targetCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (_) {}
+      if (syncToOpener) {
+        var gateName = String(targetCard.getAttribute("data-gate-title") || "").trim();
+        if (gateName) syncGateHighlightToOpener(gateName);
       }
-      if (!payload || !Array.isArray(payload.specs)) {
-        document.getElementById('chartList').innerHTML = '<div class="chart-empty">图表数据格式无效。</div>';
+    }
+
+    function applyGateSearchResult(item) {
+      if (!item) return;
+      var searchInputEl = document.getElementById("gateSearchInput");
+      if (searchInputEl) searchInputEl.value = item.title;
+      hideSearchSuggest();
+      highlightGateCard(item.index, true);
+    }
+
+    function renderGateSearchSuggest(results) {
+      var suggestEl = document.getElementById("gateSearchSuggest");
+      if (!suggestEl) return;
+      currentSearchResults = Array.isArray(results) ? results : [];
+      currentSearchActiveIndex = currentSearchResults.length ? 0 : -1;
+      if (!currentSearchResults.length) {
+        suggestEl.innerHTML = "";
+        suggestEl.classList.remove("show");
         return;
       }
+      suggestEl.innerHTML = currentSearchResults.map(function(item, idx) {
+        var metaText = escapeHtml(item.subtitle || item.meta || "");
+        return '<button type="button" class="search-suggest-item' + (idx === 0 ? " active" : "") + '" data-result-index="' + idx + '">' +
+          "<span>" + escapeHtml(item.title) + "</span>" +
+          (metaText ? ("<small>" + metaText + "</small>") : "") +
+          "</button>";
+      }).join("");
+      suggestEl.classList.add("show");
+      var buttons = suggestEl.querySelectorAll(".search-suggest-item");
+      buttons.forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          var idx = Number(btn.getAttribute("data-result-index"));
+          applyGateSearchResult(currentSearchResults[idx]);
+        });
+      });
+    }
 
-      document.title = String(payload.title || '图表汇总');
-      document.getElementById('standaloneTitle').textContent = String(payload.title || '图表汇总');
-      document.getElementById('standaloneSubtitle').textContent = String(payload.subtitle || '');
-      currentSpecs = payload.specs;
-      renderSpecs(currentSpecs);
+    function updateGateSearchSuggest(queryText) {
+      var query = normalizeSearchText(queryText);
+      if (!query) {
+        hideSearchSuggest();
+        return;
+      }
+      var results = buildGateSearchIndex(currentSpecs)
+        .map(function(item) {
+          return { item: item, score: scoreGateSearch(item, query) };
+        })
+        .filter(function(entry) {
+          return entry.score >= 0;
+        })
+        .sort(function(a, b) {
+          return b.score - a.score || a.item.index - b.item.index;
+        })
+        .slice(0, 8)
+        .map(function(entry) {
+          return entry.item;
+        });
+      renderGateSearchSuggest(results);
+    }
 
-      var selectEl = document.getElementById('columnCountSelect');
+    function loadImage(src) {
+      return new Promise(function(resolve, reject) {
+        var img = new Image();
+        img.onload = function() { resolve(img); };
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    async function exportChartsImage() {
+      if (!window.Plotly || !currentSpecs.length) return;
+      var button = document.getElementById("exportImageBtn");
+      if (button) {
+        button.disabled = true;
+        button.textContent = "导出中...";
+      }
+      try {
+        var chartListEl = document.getElementById("chartList");
+        var cards = Array.prototype.slice.call(chartListEl.querySelectorAll(".detail-chart-card"));
+        if (!cards.length) return;
+        var plots = cards.map(function(card) {
+          return card.querySelector(".detail-chart-plot");
+        }).filter(Boolean);
+        if (!plots.length) return;
+
+        var dpi = Math.max(72, Math.min(1200, Math.round(safeNum((document.getElementById("exportDpiSelect") || {}).value, 300))));
+        var scale = Math.max(1, dpi / 96);
+        var columns = normalizeColumnCount((document.getElementById("columnCountSelect") || {}).value);
+        var gap = 10;
+        var padding = 16;
+        var titleHeight = 54;
+        var chartListRect = chartListEl.getBoundingClientRect();
+        var cardRects = cards.map(function(card) { return card.getBoundingClientRect(); });
+        var rowHeights = [];
+        for (var i = 0; i < cardRects.length; i += columns) {
+          var rowHeight = 0;
+          for (var j = i; j < Math.min(i + columns, cardRects.length); j += 1) {
+            rowHeight = Math.max(rowHeight, cardRects[j].height || 0);
+          }
+          rowHeights.push(Math.max(218, rowHeight));
+        }
+
+        var exportWidthCss = Math.max(320, chartListRect.width || 320);
+        var exportHeightCss = padding * 2 + titleHeight + rowHeights.reduce(function(sum, h) { return sum + h; }, 0) + Math.max(0, rowHeights.length - 1) * gap;
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(exportWidthCss * scale));
+        canvas.height = Math.max(1, Math.round(exportHeightCss * scale));
+        var ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillRect(0, 0, exportWidthCss, exportHeightCss);
+
+        ctx.fillStyle = "#0f172a";
+        ctx.font = '700 16px "Microsoft YaHei", sans-serif';
+        ctx.fillText(String((currentPayload && currentPayload.title) || document.title || "图表汇总"), padding, 26);
+        ctx.fillStyle = "#64748b";
+        ctx.font = '12px "Microsoft YaHei", sans-serif';
+        var subtitle = String((currentPayload && currentPayload.subtitle) || "");
+        if (subtitle) ctx.fillText(subtitle, padding, 46);
+
+        var images = [];
+        for (var p = 0; p < plots.length; p += 1) {
+          var plotRect = plots[p].getBoundingClientRect();
+          var dataUrl = await Plotly.toImage(plots[p], {
+            format: "png",
+            width: Math.max(1, Math.round(plotRect.width)),
+            height: Math.max(1, Math.round(plotRect.height)),
+            scale: scale
+          });
+          images.push(await loadImage(dataUrl));
+        }
+
+        var xStarts = [];
+        for (var cardIndex = 0; cardIndex < cardRects.length; cardIndex += 1) {
+          if (cardIndex < columns) xStarts.push(cardRects[cardIndex].left - chartListRect.left);
+        }
+
+        var yOffset = padding + titleHeight;
+        for (var row = 0; row < rowHeights.length; row += 1) {
+          for (var col = 0; col < columns; col += 1) {
+            var idx = row * columns + col;
+            if (idx >= cards.length) break;
+            var card = cards[idx];
+            var rect = cardRects[idx];
+            var plotRectCss = plots[idx].getBoundingClientRect();
+            var cardW = rect.width || 320;
+            var cardH = rect.height || rowHeights[row];
+            var xOffset = padding + (xStarts[col] || 0);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.strokeStyle = "rgba(15,118,110,0.2)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (ctx.roundRect) {
+              ctx.roundRect(xOffset, yOffset, cardW, cardH, 10);
+            } else {
+              ctx.rect(xOffset, yOffset, cardW, cardH);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            var titleEl = card.querySelector(".detail-chart-title");
+            var metaEl = card.querySelector(".detail-chart-title-meta");
+            ctx.fillStyle = "#0f172a";
+            ctx.font = '700 12px "Microsoft YaHei", sans-serif';
+            ctx.fillText(String(titleEl ? titleEl.textContent || "" : ""), xOffset + 10, yOffset + 16);
+            if (metaEl && metaEl.textContent) {
+              ctx.fillStyle = "#64748b";
+              ctx.font = '11px "Microsoft YaHei", sans-serif';
+              ctx.fillText(String(metaEl.textContent), xOffset + 10, yOffset + 30);
+            }
+
+            ctx.drawImage(images[idx], xOffset + 4, yOffset + 34, Math.max(1, plotRectCss.width), Math.max(1, plotRectCss.height));
+          }
+          yOffset += rowHeights[row] + gap;
+        }
+
+        var link = document.createElement("a");
+        var safeTitle = String((currentPayload && currentPayload.title) || "charts").replace(/[\\/:*?"<>|]+/g, "_");
+        link.href = canvas.toDataURL("image/png");
+        link.download = safeTitle + "_" + String(dpi) + "dpi.png";
+        link.click();
+      } catch (error) {
+        console.error(error);
+        alert("导出图片失败，请稍后重试。");
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "导出图片";
+        }
+      }
+    }
+
+    function bindControls(payload) {
+      var selectEl = document.getElementById("columnCountSelect");
       var defaultColumns = resolveDefaultColumns(payload);
       if (selectEl) {
         selectEl.value = String(defaultColumns);
-        selectEl.addEventListener('change', function() {
+        selectEl.addEventListener("change", function() {
           setChartColumns(selectEl.value);
         });
       }
       setChartColumns(defaultColumns);
 
+      ["fontSizeInput", "legendShowSelect", "legendOrientationSelect", "legendXInput", "legendYInput"].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("change", updatePlotAppearance);
+      });
+
+      var searchInputEl = document.getElementById("gateSearchInput");
+      if (searchInputEl) {
+        searchInputEl.addEventListener("input", function() {
+          updateGateSearchSuggest(searchInputEl.value);
+        });
+        searchInputEl.addEventListener("keydown", function(evt) {
+          if (!currentSearchResults.length) {
+            if (evt.key === "Enter") {
+              var exactMatch = buildGateSearchIndex(currentSpecs).find(function(item) {
+                return normalizeSearchText(item.title) === normalizeSearchText(searchInputEl.value);
+              });
+              if (exactMatch) {
+                evt.preventDefault();
+                applyGateSearchResult(exactMatch);
+              }
+            }
+            return;
+          }
+          if (evt.key === "ArrowDown") {
+            evt.preventDefault();
+            setActiveSearchSuggestItem(Math.min(currentSearchResults.length - 1, currentSearchActiveIndex + 1));
+          } else if (evt.key === "ArrowUp") {
+            evt.preventDefault();
+            setActiveSearchSuggestItem(Math.max(0, currentSearchActiveIndex - 1));
+          } else if (evt.key === "Enter") {
+            evt.preventDefault();
+            var target = currentSearchResults[Math.max(0, currentSearchActiveIndex)];
+            applyGateSearchResult(target);
+          } else if (evt.key === "Escape") {
+            hideSearchSuggest();
+          }
+        });
+        searchInputEl.addEventListener("focus", function() {
+          if (searchInputEl.value.trim()) updateGateSearchSuggest(searchInputEl.value);
+        });
+      }
+
+      document.addEventListener("click", function(evt) {
+        var searchWrap = document.querySelector(".search-wrap");
+        if (searchWrap && !searchWrap.contains(evt.target)) hideSearchSuggest();
+      });
+
+      var exportBtn = document.getElementById("exportImageBtn");
+      if (exportBtn) exportBtn.addEventListener("click", exportChartsImage);
+    }
+
+    function readPayloadFromWindowName() {
+      var raw = String(window.name || "");
+      if (!raw) return null;
       try {
-        localStorage.removeItem(key);
+        var payload = JSON.parse(raw);
+        return payload && Array.isArray(payload.specs) ? payload : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function bootstrap() {
+      var payload = readPayloadFromWindowName();
+      var key = "";
+      if (!payload) {
+        var params = new URLSearchParams(window.location.search || "");
+        key = params.get("chartsKey") || "";
+        if (key) {
+          var raw = "";
+          try {
+            raw = localStorage.getItem(key) || "";
+          } catch (e) {
+            raw = "";
+          }
+          if (raw) {
+            try {
+              payload = JSON.parse(raw);
+            } catch (e) {
+              payload = null;
+            }
+          }
+        }
+      }
+
+      if (!payload || !Array.isArray(payload.specs)) {
+        document.getElementById("chartList").innerHTML = '<div class="chart-empty">未找到图表数据，请返回主页面重新打开“全部图表”。</div>';
+        return;
+      }
+
+      currentPayload = payload;
+      document.title = String(payload.title || "图表汇总");
+      document.getElementById("standaloneTitle").textContent = String(payload.title || "图表汇总");
+      document.getElementById("standaloneSubtitle").textContent = String(payload.subtitle || "");
+      currentSpecs = payload.specs;
+      renderSpecs(currentSpecs);
+      bindControls(payload);
+
+      try {
+        if (key) localStorage.removeItem(key);
       } catch (e) {}
     }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', bootstrap);
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", bootstrap);
     } else {
       bootstrap();
     }
