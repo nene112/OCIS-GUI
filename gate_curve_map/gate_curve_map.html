@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>闂搁棬鏇茬嚎鍦板浘</title>
+  <title>闸门曲线地图</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@9.2.4/ol.css" />
   <style>
     :root {
@@ -793,7 +793,7 @@
         const strokeColor = edgeMissing ? 'rgba(220, 38, 38, 0.36)' : (isSelected ? 'rgba(220, 38, 38, 0.26)' : 'rgba(20, 83, 45, 0.22)');
         const textColor = edgeMissing ? '#7f1d1d' : (isSelected ? '#7f1d1d' : '#163042');
         const textBgColor = edgeMissing ? 'rgba(254, 226, 226, 0.92)' : (isSelected ? 'rgba(254, 226, 226, 0.9)' : 'rgba(255,255,255,0.82)');
-        const displayName = edgeMissing ? (name + ' [缂鸿竟]') : name;
+        const displayName = edgeMissing ? (name + ' [缺边]') : name;
         return new ol.style.Style({
           zIndex: isSelected ? 20 : 10,
           image: new ol.style.Circle({
@@ -964,7 +964,7 @@
       if (!waterlinePanelEl || !waterlineToggleBtnEl) return;
       waterlinePanelEl.classList.toggle('collapsed', waterlineCollapsed);
       document.documentElement.style.setProperty('--waterline-visible-h', waterlineCollapsed ? '32px' : '268px');
-      waterlineToggleBtnEl.textContent = waterlineCollapsed ? '灞曞紑' : '鎶樺彔';
+      waterlineToggleBtnEl.textContent = waterlineCollapsed ? '展开' : '折叠';
       if (waterlineModeBtnEl) waterlineModeBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
       if (waterlinePlayBtnEl) waterlinePlayBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
       if (waterlinePauseBtnEl) waterlinePauseBtnEl.style.display = waterlineCollapsed ? 'none' : 'inline-block';
@@ -977,7 +977,7 @@
       const safeCanal = String(canal || '-');
       const safeStep = Number.isFinite(stepIndex) ? stepIndex : '-';
       const safeLabel = String(stepLabel || '-');
-      waterlineMetaEl.textContent = '娓犳: ' + safeCanal + ' | 鏃堕棿姝? ' + safeStep + ' (' + safeLabel + ')';
+      waterlineMetaEl.textContent = '渠段: ' + safeCanal + ' | 时间步: ' + safeStep + ' (' + safeLabel + ')';
     }
 
     function resetWaterlineView() {
@@ -1213,7 +1213,7 @@
           x: canal.x,
           y: waterY0,
           text: canal.labels,
-          hovertemplate: '%{text}<br>姘撮潰楂樼▼=%{y:.3f} m<extra></extra>',
+          hovertemplate: '%{text}<br>水面高程=%{y:.3f} m<extra></extra>',
           line: { width: 2, color: '#0f766e' },
           marker: { size: 4, color: '#0f766e' },
           xaxis: 'x' + axisSuffix,
@@ -1226,7 +1226,7 @@
           x: canal.x,
           y: bedY,
           text: canal.labels,
-          hovertemplate: '%{text}<br>娓犲簳楂樼▼=%{y:.3f} m<extra></extra>',
+          hovertemplate: '%{text}<br>渠底高程=%{y:.3f} m<extra></extra>',
           line: { width: 1.6, color: 'rgba(120,72,32,0.95)' },
           xaxis: 'x' + axisSuffix,
           yaxis: 'y' + axisSuffix,
@@ -1238,7 +1238,7 @@
           x: canal.x,
           y: gateFlowY,
           text: canal.labels,
-          hovertemplate: '%{text}<br>鑺傚埗闂告祦閲?%{y:.3f} m^3/s<extra></extra>',
+          hovertemplate: '%{text}<br>节制闸流量=%{y:.3f} m^3/s<extra></extra>',
           line: { width: 2, color: '#2563eb', dash: 'dash' },
           marker: { size: 4, color: '#2563eb' },
           xaxis: 'x' + axisSuffix,
@@ -1250,7 +1250,7 @@
           x: diversionX,
           y: diversionFlowY,
           text: diversionLabel,
-          hovertemplate: '%{text}<br>鍒嗘按/娓楁紡娴侀噺鍜?type=2/6)=%{y:.3f} m^3/s<extra></extra>',
+          hovertemplate: '%{text}<br>分水/渗漏流量和(type=2/6)=%{y:.3f} m^3/s<extra></extra>',
           marker: {
             color: 'rgba(249,115,22,0.52)',
             line: { color: 'rgba(194,65,12,0.9)', width: 1 }
@@ -1389,13 +1389,13 @@
         modeBarButtonsToAdd: ['autoScale2d', 'resetScale2d']
       }).then(() => {
         Plotly.addFrames(waterlinePlotEl, frames);
-        setWaterlineMeta('绂绘暎鐐规ā寮?' + canals.length + '鏉℃笭娈?', 1, timeline[0]);
+        setWaterlineMeta('离散点模式(' + canals.length + '条渠段)', 1, timeline[0]);
         waterlinePlotEl.on('plotly_sliderchange', (evt) => {
           const step = evt && evt.step ? evt.step : null;
           const label = step ? String(step.label || '') : '';
           const idx = Math.max(0, Number(label) - 1);
           const tm = timeline[idx] || timeline[0] || '-';
-          setWaterlineMeta('绂绘暎鐐规ā寮?' + canals.length + '鏉℃笭娈?', idx + 1, tm);
+          setWaterlineMeta('离散点模式(' + canals.length + '条渠段)', idx + 1, tm);
         });
       });
     }
@@ -1623,11 +1623,11 @@
           const diffMs = b - a;
           const minutes = Math.round(diffMs / 60000);
           if (minutes % 1440 === 0) {
-            step = (minutes / 1440) + '?';
+            step = (minutes / 1440) + '天';
           } else if (minutes % 60 === 0) {
-            step = (minutes / 60) + '灏忔椂';
+            step = (minutes / 60) + '小时';
           } else {
-            step = minutes + '鍒嗛挓';
+            step = minutes + '分钟';
           }
         }
       }
@@ -1809,7 +1809,7 @@
       const base = buildWaterlineBaseSeries(stageMap, edges, gates);
       if (!base || !Array.isArray(stageMap.timeline) || !stageMap.timeline.length) {
         Plotly.purge(waterlinePlotEl);
-        waterlinePlotEl.innerHTML = '<div class="chart-empty">鍔ㄦ€佹按闈㈢嚎鏃犲彲鐢ㄦ暟鎹€?/div>';
+        waterlinePlotEl.innerHTML = '<div class="chart-empty">动态水面线无可用数据。</div>';
         return;
       }
 
@@ -1984,41 +1984,41 @@
         y: initialY,
         customdata: customData,
         text: base.xLabels,
-        hovertemplate: '鑺傜偣=%{text}<br>绌洪棿鍧愭爣=%{customdata[0]}<br>娓犲簳楂樼▼=%{customdata[1]:.3f} m<br>姘撮潰楂樼▼=%{y:.3f} m<extra></extra>',
+        hovertemplate: '节点=%{text}<br>空间坐标=%{customdata[0]}<br>渠底高程=%{customdata[1]:.3f} m<br>水面高程=%{y:.3f} m<extra></extra>',
         line: { color: '#0f766e', width: 3 },
-        name: '姘撮潰楂樼▼'
+        name: '水面高程'
       }, {
         type: 'scatter',
         mode: 'lines',
         x: xTickVals,
         y: bedY,
         text: base.xLabels,
-        hovertemplate: '鑺傜偣=%{text}<br>娓犲簳楂樼▼=%{y:.3f} m<extra></extra>',
+        hovertemplate: '节点=%{text}<br>渠底高程=%{y:.3f} m<extra></extra>',
         line: { color: 'rgba(120,72,32,0.95)', width: 1.8 },
         fill: 'tozeroy',
         fillcolor: 'rgba(120,72,32,0.28)',
-        name: '娓犲簳楂樼▼'
+        name: '渠底高程'
       }, {
         type: 'scatter',
         mode: 'lines+markers',
         x: xTickVals,
         y: initialGateFlowY,
         text: base.xLabels,
-        hovertemplate: '鑺傜偣=%{text}<br>鑺傚埗闂告祦閲?type=0/4)=%{y:.3f} m^3/s<extra></extra>',
+        hovertemplate: '节点=%{text}<br>节制闸流量(type=0/4)=%{y:.3f} m^3/s<extra></extra>',
         line: { color: '#2563eb', width: 2, dash: 'dash' },
         marker: { color: '#2563eb', size: 4 },
         yaxis: 'y2',
-        name: '鑺傚埗闂告祦閲?type=0/4)'
+        name: '节制闸流量(type=0/4)'
       }, {
         type: 'bar',
         x: diversionBarX,
         y: initialDiversionFlowY,
         text: diversionBarLabel,
         customdata: segmentDefs.map((seg, idx) => [seg.diversionSeriesEntries.length, diversionBarSeriesLabel[idx]]),
-        hovertemplate: '鍖洪棿=%{text}<br>鍒嗘按/娓楁紡涓暟(type=2/6)=%{customdata[0]}<br>瀵硅薄=%{customdata[1]}<br>鍒嗘按/娓楁紡娴侀噺鍜?%{y:.3f} m^3/s<extra></extra>',
+        hovertemplate: '区间=%{text}<br>分水/渗漏个数(type=2/6)=%{customdata[0]}<br>对象=%{customdata[1]}<br>分水/渗漏流量和=%{y:.3f} m^3/s<extra></extra>',
         marker: { color: 'rgba(249,115,22,0.72)', line: { color: 'rgba(194,65,12,0.85)', width: 0.8 } },
         yaxis: 'y2',
-        name: '鍖洪棿鍒嗘按/娓楁紡娴侀噺鍜?type=2/6)',
+        name: '区间分水/渗漏流量和(type=2/6)',
         opacity: 0.92
       }];
 
@@ -2193,7 +2193,7 @@
       const edgeSegments = buildEdgeSegmentsWithMissingBridge(edges, gateCoordByName);
 
       edgeSegments.forEach((seg) => {
-        const segmentLabel = (seg.source + ' -> ' + seg.target) + (seg.canal ? ('?' + seg.canal + '?') : '');
+        const segmentLabel = formatSegmentLabel(seg.source, seg.target, seg.canal);
         if (!segmentColorMap.has(segmentLabel)) {
           segmentColorMap.set(segmentLabel, CHANNEL_PALETTE[colorIdx % CHANNEL_PALETTE.length]);
           colorIdx++;
@@ -2292,16 +2292,21 @@
       const { features, segmentColorMap } = loadChannelFeatures(inputTxt, neighborTxt, gates, edges);
       channelSource.addFeatures(features);
 
-      // 娓犻亾鍥句緥
+      // 渠段图例
       channelLegendItemsEl.innerHTML = '';
-      segmentColorMap.forEach((color, segmentLabel) => {
+      buildChannelLegendEntries(edges, segmentColorMap).forEach(({ color, label }) => {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:3px 0;';
-        row.innerHTML = '<span style="flex-shrink:0;width:20px;height:3px;border-radius:2px;background:' + color + ';display:inline-block;"></span>' +
-          '<span style="color:#587082;">' + segmentLabel + '</span>';
+        const swatch = document.createElement('span');
+        swatch.style.cssText = 'flex-shrink:0;width:20px;height:3px;border-radius:2px;background:' + color + ';display:inline-block;';
+        const text = document.createElement('span');
+        text.style.cssText = 'color:#587082;';
+        text.textContent = label;
+        row.appendChild(swatch);
+        row.appendChild(text);
         channelLegendItemsEl.appendChild(row);
       });
-      channelLegendEl.style.display = segmentColorMap.size ? 'block' : 'none';
+      channelLegendEl.style.display = channelLegendItemsEl.childElementCount ? 'block' : 'none';
 
       return features.length;
     }
@@ -2349,33 +2354,10 @@
     async function fetchText(path) {
       const response = await fetch(path, { cache: 'no-store' });
       if (!response.ok) {
-        throw new Error(path + ' 鍔犺浇澶辫触: HTTP ' + response.status);
+        throw new Error(path + ' 加载失败: HTTP ' + response.status);
       }
-      const buf = await response.arrayBuffer();
-      const candidates = [];
-      candidates.push(new TextDecoder('utf-8').decode(buf));
-      try { candidates.push(new TextDecoder('gbk').decode(buf)); } catch (e) {}
-      try { candidates.push(new TextDecoder('gb18030').decode(buf)); } catch (e) {}
-
-      function scoreDecodedText(s) {
-        const text = String(s || '');
-        const bad = (text.match(/\uFFFD/g) || []).length;
-        const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-        const comma = (text.match(/,/g) || []).length;
-        // Fewer replacement chars is better; then prefer richer Chinese/comma structure.
-        return (-1000 * bad) + (2 * cjk) + comma;
-      }
-
-      let best = candidates[0] || '';
-      let bestScore = scoreDecodedText(best);
-      for (let i = 1; i < candidates.length; i += 1) {
-        const sc = scoreDecodedText(candidates[i]);
-        if (sc > bestScore) {
-          bestScore = sc;
-          best = candidates[i];
-        }
-      }
-      return best;
+      const text = await response.text();
+      return String(text || '').replace(/^\uFEFF/, '');
     }
 
     function joinPath(basePath, childPath) {
@@ -2410,6 +2392,43 @@
         }
       }
       throw (lastError || new Error('未找到可用数据文件'));
+    }
+
+    async function fetchTextFirstResolved(paths) {
+      let lastError = null;
+      for (let i = 0; i < paths.length; i += 1) {
+        const path = String(paths[i] || '').trim();
+        if (!path) continue;
+        try {
+          return { path, text: await fetchText(path) };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw (lastError || new Error('未找到可用数据文件'));
+    }
+
+    function buildPathCandidates(primaryPath, fallbacks) {
+      const seen = new Set();
+      const result = [];
+      [primaryPath].concat(Array.isArray(fallbacks) ? fallbacks : []).forEach((item) => {
+        const path = resolveDataPath(item);
+        const key = String(path || '').trim();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        result.push(key);
+      });
+      return result;
+    }
+
+    function isTdFormatPath(path) {
+      const text = String(path || '').trim().toLowerCase();
+      if (!text) return false;
+      const slash = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+      const fileName = slash >= 0 ? text.slice(slash + 1) : text;
+      const dot = fileName.lastIndexOf('.');
+      const stem = dot >= 0 ? fileName.slice(0, dot) : fileName;
+      return stem.indexOf('_td') >= 0;
     }
 
     function formatTimeLabel(raw) {
@@ -2471,7 +2490,7 @@
       const safeSubtitle = escapeHtmlAttr(subtitle || '');
       const contentHtml = chartListHtml && String(chartListHtml).trim()
         ? chartListHtml
-        : '<div class="chart-empty">褰撳墠鏃犲浘琛ㄥ彲灞曠ず銆?/div>';
+        : '<div class="chart-empty">当前无图表可展示。</div>';
       return [
         '<!doctype html>',
         '<html lang="zh-CN">',
@@ -2515,11 +2534,11 @@
       const subtitleParts = [];
       const metaText = paneMetaEl ? String(paneMetaEl.textContent || '').trim() : '';
       if (metaText) subtitleParts.push(metaText);
-      const gateText = selectedGateName ? ('褰撳墠闂搁棬=' + selectedGateName) : '';
+      const gateText = selectedGateName ? ('当前闸门=' + selectedGateName) : '';
       if (gateText) subtitleParts.push(gateText);
-      const channelText = selectedChannelLabel ? ('褰撳墠娓犳=' + selectedChannelLabel) : '';
+      const channelText = selectedChannelLabel ? ('当前渠段=' + selectedChannelLabel) : '';
       if (channelText) subtitleParts.push(channelText);
-      subtitleParts.push('鐢熸垚鏃堕棿=' + new Date().toLocaleString('zh-CN'));
+      subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
 
       const docHtml = buildStandaloneChartsDocument(
         title,
@@ -2551,6 +2570,65 @@
       return false;
     }
 
+    function parseTimelineInstant(value) {
+      const text = String(value || '').trim();
+      if (!text) return NaN;
+      const normalized = text.replace(/\//g, '-');
+      let ts = Date.parse(normalized);
+      if (Number.isFinite(ts)) return ts;
+      ts = Date.parse(normalized.replace(' ', 'T'));
+      return Number.isFinite(ts) ? ts : NaN;
+    }
+
+    function buildTimelineStepSeconds(timeline, valueCount) {
+      const count = Math.max(0, Number(valueCount) || 0);
+      if (count <= 1) return [];
+      const labels = Array.isArray(timeline) ? timeline : [];
+      const steps = new Array(count - 1).fill(1);
+      let hasParsedStep = false;
+      for (let i = 0; i < count - 1; i += 1) {
+        const t0 = parseTimelineInstant(labels[i]);
+        const t1 = parseTimelineInstant(labels[i + 1]);
+        if (!Number.isFinite(t0) || !Number.isFinite(t1)) continue;
+        const dtSeconds = (t1 - t0) / 1000;
+        if (Number.isFinite(dtSeconds) && dtSeconds > 0) {
+          steps[i] = dtSeconds;
+          hasParsedStep = true;
+        }
+      }
+      return hasParsedStep ? steps : new Array(count - 1).fill(1);
+    }
+
+    function integrateSeriesByTimeline(values, timeline) {
+      const list = Array.isArray(values) ? values : [];
+      if (list.length <= 1) return 0;
+      const steps = buildTimelineStepSeconds(timeline, list.length);
+      let total = 0;
+      for (let i = 0; i < list.length - 1; i += 1) {
+        const v0 = Number(list[i]);
+        const v1 = Number(list[i + 1]);
+        if (!Number.isFinite(v0) || !Number.isFinite(v1)) continue;
+        const dt = Number(steps[i]);
+        if (!Number.isFinite(dt) || dt <= 0) continue;
+        total += ((v0 + v1) * 0.5) * dt;
+      }
+      return total;
+    }
+
+    function buildFlowVolumeCompareSpec(simValues, obsValues, timeline) {
+      const simVolume = integrateSeriesByTimeline(simValues, timeline);
+      const obsVolume = integrateSeriesByTimeline(obsValues, timeline);
+      const hasSim = Math.abs(simVolume) > 1e-12;
+      const hasObs = Math.abs(obsVolume) > 1e-12;
+      const completionRatio = hasObs ? (simVolume / obsVolume) : null;
+      return {
+        simVolume: simVolume,
+        obsVolume: obsVolume,
+        completionRatio: Number.isFinite(completionRatio) ? completionRatio : null,
+        hasCompareBars: hasSim || hasObs
+      };
+    }
+
     function buildAllChannelChartSpecs() {
       const nameSet = new Set();
       (Array.isArray(currentGateRows) ? currentGateRows : []).forEach((gate) => {
@@ -2578,10 +2656,10 @@
           (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
 
         const seriesList = [
-          { label: '妯℃嫙', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
         ];
         if (hasFiniteValue(obsValues)) {
-          seriesList.push({ label: '瀹炴祴', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
         }
 
         specs.push({
@@ -2622,27 +2700,38 @@
         const values = getFlowSeriesForName(name);
         if (!hasFiniteValue(values)) return;
         const obsValues = getObsSeriesForName(name);
+        const timeline = Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [];
+        const flowCompare = buildFlowVolumeCompareSpec(values, obsValues, timeline);
         const lastValue = getLastFiniteValue(values);
         const obsLastValue = getLastFiniteValue(obsValues);
         const inIni = currentGatesIniNameSet.has(canonicalName(name));
         const headerMeta = (inIni ? 'Gates.ini' : '非Gates.ini') + ' | 末值=' +
           (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
-          (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+          (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '') +
+          ' | 完成度=' + (flowCompare.completionRatio == null ? '-' : (flowCompare.completionRatio * 100).toFixed(1) + '%');
 
         const seriesList = [
-          { label: '妯℃嫙', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
         ];
         if (hasFiniteValue(obsValues)) {
-          seriesList.push({ label: '瀹炴祴', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
         }
 
         specs.push({
           title: name,
           subtitle: '闸门流量过程线',
-          timeline: Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [],
+          timeline: timeline,
           yUnit: 'm^3/s',
           headerMeta: headerMeta,
-          seriesList: seriesList
+          seriesList: seriesList,
+          flowCompare: {
+            enabled: flowCompare.hasCompareBars,
+            simVolume: flowCompare.simVolume,
+            obsVolume: flowCompare.obsVolume,
+            completionRatio: flowCompare.completionRatio,
+            simLabel: '模拟积分',
+            obsLabel: '实测积分'
+          }
         });
       });
       return specs;
@@ -2650,7 +2739,7 @@
 
     function buildStandaloneCardsHtmlFromSpecs(specs) {
       const list = Array.isArray(specs) ? specs : [];
-      if (!list.length) return '<div class="chart-empty">褰撳墠鏃犲浘琛ㄥ彲灞曠ず銆?/div>';
+      if (!list.length) return '<div class="chart-empty">当前无图表可展示。</div>';
 
       return list.map((spec, index) => {
         const plotId = 'popup-plot-' + (index + 1);
@@ -2730,7 +2819,7 @@
         '        traces.push({',
         '          x: pts.x, y: pts.y, customdata: pts.t, type: "scatter",',
         '          mode: String(s.mode || "lines"), name: String(s.label || ""),',
-        '          hovertemplate: "姝ュ簭=%{x}<br>鏃堕棿=%{customdata}<br>鏁板€?%{y:.3f}<extra>%{fullData.name}</extra>",',
+        '          hovertemplate: "步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>",',
         '          line: { color: String(s.color || "#0f766e"), width: 2, dash: String(s.dash || "solid") },',
         '          marker: { color: String(s.markerColor || s.color || "#0f766e"), size: Number(s.markerSize || 5) }',
         '        });',
@@ -2841,7 +2930,7 @@
       if (!segmentInfoModalEl || !segmentInfoBodyEl) return;
       const info = getCurrentChannelSegmentInfo();
       if (!info) {
-        segmentInfoBodyEl.innerHTML = '<div class="chart-empty">璇峰厛鍦?GIS 涓€変腑涓€涓笭娈碉紝鍐嶆煡鐪嬫笭娈典俊鎭€?/div>';
+        segmentInfoBodyEl.innerHTML = '<div class="chart-empty">请先在 GIS 中选中一个渠段，再查看渠段信息。</div>';
       } else {
         const indirectTableRows = info.indirectRows.map((edge) => {
           return '<tr>' +
@@ -2868,9 +2957,9 @@
 
         segmentInfoBodyEl.innerHTML = [
           '<div class="segment-info-kv">',
-          '<strong>褰撳墠娓犳:</strong> ' + escapeHtmlAttr(info.label) + '<br>',
-          '<strong>涓婃父鑺傚埗闂?source):</strong> ' + escapeHtmlAttr(info.source || '-') + '<br>',
-          '<strong>涓嬫父鑺傚埗闂?target):</strong> ' + escapeHtmlAttr(info.target || '-') + '<br>',
+          '<strong>当前渠段:</strong> ' + escapeHtmlAttr(info.label) + '<br>',
+          '<strong>上游节制闸(source):</strong> ' + escapeHtmlAttr(info.source || '-') + '<br>',
+          '<strong>下游节制闸(target):</strong> ' + escapeHtmlAttr(info.target || '-') + '<br>',
           '<strong>渠段(canal):</strong> ' + escapeHtmlAttr(info.canal || '-'),
           '</div>',
           '<div><strong>indirect 主边</strong></div>',
@@ -2931,7 +3020,7 @@
             type: 'scatter',
             mode,
             name: String(series.label || ''),
-            hovertemplate: '姝ュ簭=%{x}<br>鏃堕棿=%{customdata}<br>鏁板€?%{y:.3f}<extra>%{fullData.name}</extra>',
+            hovertemplate: '步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>',
             line: {
               color: String(series.color || '#0f766e'),
               width: 2,
@@ -2944,7 +3033,7 @@
           });
         });
         if (!traces.length) {
-          host.innerHTML = '<div class="chart-empty">鏃犳暟鎹?/div>';
+          host.innerHTML = '<div class="chart-empty">无数据</div>';
           return;
         }
 
@@ -3016,10 +3105,10 @@
       const obsLastValue = getLastFiniteValue(obsValues);
       const chartId = 'plotly-chart-' + (++plotlyChartSeq);
       const seriesList = [
-        { label: '妯℃嫙', values: values, color: '#0f766e', dash: 'solid' }
+        { label: '模拟', values: values, color: '#0f766e', dash: 'solid' }
       ];
       if (obsFinite.length) {
-        seriesList.push({ label: '瀹炴祴', values: obsValues, color: '#dc2626', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+        seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
       }
       queuePlotlyChart(chartId, seriesList, opts.timeline, yUnit);
       return [
@@ -3105,6 +3194,36 @@
 
     function canonicalName(value) {
       return normalizeHeader(value).replace(/[\s\t\r\n]/g, '');
+    }
+
+    function formatSegmentLabel(source, target, canal) {
+      const s = String(source || '').trim();
+      const t = String(target || '').trim();
+      const c = String(canal || '').trim();
+      const base = s && t ? (s + ' -> ' + t) : (s || t);
+      return c ? (base + '（' + c + '）') : base;
+    }
+
+    function buildChannelLegendEntries(edges, colorSourceMap) {
+      const colorMap = colorSourceMap instanceof Map ? colorSourceMap : new Map();
+      const entries = [];
+      const seen = new Set();
+      (Array.isArray(edges) ? edges : []).forEach((edge) => {
+        if (!edge || edge.connectionType !== 'indirect') return;
+        const source = String(edge.source || '').trim();
+        const target = String((isValidNodeName(edge.target) ? edge.target : edge.end) || '').trim();
+        if (!source || !target) return;
+        const label = formatSegmentLabel(source, target, edge.canal);
+        if (!label || seen.has(label)) return;
+        seen.add(label);
+        entries.push({
+          label,
+          color: colorMap.get(label) || CHANNEL_PALETTE[entries.length % CHANNEL_PALETTE.length]
+        });
+      });
+
+      if (entries.length) return entries;
+      return Array.from(colorMap.entries()).map(([label, color]) => ({ label, color }));
     }
 
     function getObsSeriesForName(name) {
@@ -3300,11 +3419,21 @@
       return { timeline, byName, seriesHeaders };
     }
 
+    function loadSeriesByResolvedPath(resolved) {
+      const sourcePath = resolved && resolved.path ? String(resolved.path) : '';
+      const csvText = resolved && typeof resolved.text === 'string' ? resolved.text : '';
+      const parsed = isTdFormatPath(sourcePath) ? loadTdSeriesMap(csvText) : loadSeriesMap(csvText);
+      parsed.format = isTdFormatPath(sourcePath) ? 'td' : 'pivot';
+      parsed.sourcePath = sourcePath;
+      return parsed;
+    }
+
     function buildObsAlignedMap(obsMap, flowMap) {
       const aligned = new Map();
       const obsHeaders = Array.isArray(obsMap.seriesHeaders) ? obsMap.seriesHeaders : [];
       const flowHeaders = Array.isArray(flowMap.seriesHeaders) ? flowMap.seriesHeaders : [];
       const baseTimeline = Array.isArray(flowMap.timeline) ? flowMap.timeline : [];
+      const allowIndexFallback = String(obsMap && obsMap.format || '') === 'pivot';
       const obsByCanon = new Map();
       obsHeaders.forEach((name) => {
         const canon = canonicalName(name);
@@ -3318,7 +3447,7 @@
           const canon = canonicalName(flowName);
           if (canon && obsByCanon.has(canon)) obsName = obsByCanon.get(canon);
         }
-        if (!obsName && idx < obsHeaders.length) obsName = obsHeaders[idx];
+        if (!obsName && allowIndexFallback && idx < obsHeaders.length) obsName = obsHeaders[idx];
         if (!obsName) return;
         const values = obsMap.byName.get(obsName);
         if (!values || !values.length) return;
@@ -3482,18 +3611,18 @@
         // source 闂镐笅姘翠綅锛氫紭鍏?H2锛岀己澶辨椂鍥為€€ H1銆?
         let sourceDownValues = getStageSeriesByName(currentStageH2Map, segmentSource);
         let sourceDownTimeline = currentStageH2Map.timeline;
-        let sourceDownLabel = 'source 闂镐笅姘翠綅(H2)';
+        let sourceDownLabel = 'source 闸下水位(H2)';
         if (!sourceDownValues.length) {
           sourceDownValues = getStageSeriesByName(currentStageMap, segmentSource);
           sourceDownTimeline = currentStageMap.timeline;
-          sourceDownLabel = 'source 闂镐笅姘翠綅(鍥為€€H1)';
+          sourceDownLabel = 'source 闸下水位(回退H1)';
         }
         if (sourceDownValues.length) {
           const sourceObsValues = getStageObsSeriesForName(segmentSource);
           const sourceLastValue = getLastFiniteValue(sourceDownValues);
           const sourceObsLastValue = getLastFiniteValue(sourceObsValues);
-          const sourceMeta = '鏈€?' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
-            (sourceObsValues.length ? (' | 瀹炴祴鏈€?' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
+          const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
+            (sourceObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
           channelCards.push(buildChartCardHtml(segmentSource, sourceDownValues, sourceDownLabel, {
             timeline: sourceDownTimeline,
             yUnit: 'm',
@@ -3509,9 +3638,9 @@
           const targetObsValues = getStageObsSeriesForName(segmentTarget);
           const targetLastValue = getLastFiniteValue(targetUpValues);
           const targetObsLastValue = getLastFiniteValue(targetObsValues);
-          const targetMeta = '鏈€?' + (targetLastValue == null ? '-' : targetLastValue.toFixed(3)) + ' m' +
-            (targetObsValues.length ? (' | 瀹炴祴鏈€?' + (targetObsLastValue == null ? '-' : targetObsLastValue.toFixed(3)) + ' m') : '');
-          channelCards.push(buildChartCardHtml(segmentTarget, targetUpValues, 'target 闂镐笂姘翠綅(H1)', {
+          const targetMeta = '末值=' + (targetLastValue == null ? '-' : targetLastValue.toFixed(3)) + ' m' +
+            (targetObsValues.length ? (' | 实测末值=' + (targetObsLastValue == null ? '-' : targetObsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(segmentTarget, targetUpValues, 'target 闸上水位(H1)', {
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: targetObsValues,
@@ -3526,9 +3655,9 @@
           const sourceStageObsValues = getStageObsSeriesForName(gateName);
           const sourceLastValue = getLastFiniteValue(sourceStageValues);
           const sourceObsLastValue = getLastFiniteValue(sourceStageObsValues);
-          const sourceMeta = '鏈€?' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
-            (sourceStageObsValues.length ? (' | 瀹炴祴鏈€?' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
-          channelCards.push(buildChartCardHtml(gateName, sourceStageValues, 'source 闂稿墠姘翠綅', {
+          const sourceMeta = '末值=' + (sourceLastValue == null ? '-' : sourceLastValue.toFixed(3)) + ' m' +
+            (sourceStageObsValues.length ? (' | 实测末值=' + (sourceObsLastValue == null ? '-' : sourceObsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(gateName, sourceStageValues, 'source 闸前水位', {
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: sourceStageObsValues,
@@ -3543,9 +3672,9 @@
           const stageObsValues = getStageObsSeriesForName(targetName);
           const lastValue = getLastFiniteValue(stageValues);
           const obsLastValue = getLastFiniteValue(stageObsValues);
-          const headerMeta = '鏈€?' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
-            (stageObsValues.length ? (' | 瀹炴祴鏈€?' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
-          channelCards.push(buildChartCardHtml(targetName, stageValues, 'target 闂稿墠姘翠綅', {
+          const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m' +
+            (stageObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
+          channelCards.push(buildChartCardHtml(targetName, stageValues, 'target 闸前水位', {
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: stageObsValues,
@@ -3555,7 +3684,7 @@
         }
       }
       if (!channelCards.length) {
-        channelChartListEl.innerHTML = '<div class="chart-empty">鏈壘鍒板綋鍓嶆笭娈电殑 source 闂镐笅姘翠綅 / target 闂镐笂姘翠綅鏁版嵁銆?/div>';
+        channelChartListEl.innerHTML = '<div class="chart-empty">未找到当前渠段的 source 闸下水位 / target 闸上水位数据。</div>';
         applyChartListFillMode(channelChartListEl, 0);
       } else {
         channelChartListEl.innerHTML = channelCards.join('');
@@ -3642,7 +3771,7 @@
         // 鍚堣鏇茬嚎涓ユ牸浣跨敤妯℃嫙缁撴灉锛氬綋鍓嶉椄闂ㄤ富鍏ユ祦 + 鍏朵粬妯℃嫙鍏?鍑烘祦銆?
         if (currentGateSimValues.length) {
           addSeries(inflowSum, currentGateSimValues);
-          inflowItems.unshift({ name: gateName + '(褰撳墠闂搁棬,妯℃嫙)', values: currentGateSimValues });
+          inflowItems.unshift({ name: gateName + '(当前闸门,模拟)', values: currentGateSimValues });
         }
       }
 
@@ -3659,7 +3788,7 @@
       }
 
       if (!flowCards.length) {
-        gateChartListEl.innerHTML = '<div class="chart-empty">鏈壘鍒板綋鍓嶉椄闂ㄦ祦閲忔暟鎹€?/div>';
+        gateChartListEl.innerHTML = '<div class="chart-empty">未找到当前闸门流量数据。</div>';
         applyChartListFillMode(gateChartListEl, 0);
       } else {
         gateChartListEl.innerHTML = flowCards.join('');
@@ -3704,23 +3833,50 @@
 
     async function reload() {
       statsEl.textContent = '正在加载渠道与曲线数据...';
-      const edgePath = edgesPathEl.value.trim();
-      const edgeCandidates = [
-        resolveDataPath(edgePath),
-        resolveDataPath('mesh/edges_new.csv'),
-        resolveDataPath('mesh/edges_utf8.csv'),
-        resolveDataPath('mesh/edges.csv')
-      ];
-      const [inputTxt, neighborTxt, gateCsv, gatesIniTxt, stageCsv, stageH2Csv, stageObsCsv, flowCsv, obsCsv, edgesCsv, stakeJson] = await Promise.all([
+      const edgeCandidates = buildPathCandidates(edgesPathEl.value.trim(), [
+        'mesh/edges.csv',
+        'mesh/edges_new.csv',
+        'mesh/edges_utf8.csv'
+      ]);
+      const stageCandidates = buildPathCandidates(seriesPathEl.value.trim(), [
+        'output/channel_Gates_Stastic_h1.csv',
+        'input/channel_Gates_Stastic_h1.csv',
+        'output/stage.csv',
+        'output/stage/stage.csv',
+        'input/stage.csv'
+      ]);
+      const stageH2Candidates = buildPathCandidates('output/channel_Gates_Stastic_h2.csv', [
+        'output/stage_encode.csv',
+        'output/stage/stage_encode.csv'
+      ]);
+      const stageObsCandidates = buildPathCandidates(stageObsPathEl.value.trim(), [
+        'input/stage_obs_24_td.csv',
+        'input/stage_td.csv',
+        'output/stage_td.csv',
+        'output/stage/stage_td.csv'
+      ]);
+      const flowCandidates = buildPathCandidates(flowPathEl.value.trim(), [
+        'output/channel_Gates_Stastic.csv',
+        'output/Q.csv',
+        'output/channel_Gates_Stastic_Q_action.csv',
+        'output/action.csv'
+      ]);
+      const obsCandidates = buildPathCandidates(obsPathEl.value.trim(), [
+        'input/action_obs.csv',
+        'input/action_td.csv',
+        'output/action/action_td.csv',
+        'output/action_td_.csv'
+      ]);
+      const [inputTxt, neighborTxt, gateCsv, gatesIniTxt, stageResolved, stageH2Resolved, stageObsResolved, flowResolved, obsResolved, edgesCsv, stakeJson] = await Promise.all([
         fetchText(resolveDataPath(inputPathEl.value.trim())),
         fetchText(resolveDataPath(neighborPathEl.value.trim())),
         fetchText(resolveDataPath(gatesPathEl.value.trim())),
         fetchText(resolveDataPath('mesh/Gates.ini')).catch(() => ''),
-        fetchText(resolveDataPath(seriesPathEl.value.trim())),
-        fetchText(resolveDataPath('output/channel_Gates_Stastic_h2.csv')).catch(() => ''),
-        fetchText(resolveDataPath(stageObsPathEl.value.trim())).catch(() => ''),
-        fetchText(resolveDataPath(flowPathEl.value.trim())),
-        fetchText(resolveDataPath(obsPathEl.value.trim())).catch(() => ''),
+        fetchTextFirstResolved(stageCandidates),
+        fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
+        fetchTextFirstResolved(stageObsCandidates).catch(() => ({ path: '', text: '' })),
+        fetchTextFirstResolved(flowCandidates),
+        fetchTextFirstResolved(obsCandidates).catch(() => ({ path: '', text: '' })),
         fetchTextFirst(edgeCandidates),
         fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
       ]);
@@ -3736,13 +3892,19 @@
       const displayGateInfo = buildDisplayGatesFromIni(gatesFromIni, gatesFromCsv, gatesIniItems);
       const gates = displayGateInfo.gates.length ? displayGateInfo.gates : (gatesFromIni.length ? gatesFromIni : gatesFromCsv);
       const missingCoordIniNames = displayGateInfo.missingCoordIniNames;
-      const stageMap = loadSeriesMap(stageCsv);
-      const stageH2Map = stageH2Csv ? loadSeriesMap(stageH2Csv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
-      const stageObsMap = stageObsCsv ? loadTdSeriesMap(stageObsCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
-      const flowMap = loadSeriesMap(flowCsv);
+      const stageMap = loadSeriesByResolvedPath(stageResolved);
+      const stageH2Map = stageH2Resolved && stageH2Resolved.text
+        ? loadSeriesByResolvedPath(stageH2Resolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      const stageObsMap = stageObsResolved && stageObsResolved.text
+        ? loadSeriesByResolvedPath(stageObsResolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      const flowMap = loadSeriesByResolvedPath(flowResolved);
       const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
-      const internalFlowMap = internalFlowCsv ? loadSeriesMap(internalFlowCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
-      const obsMap = obsCsv ? loadSeriesMap(obsCsv) : { timeline: [], byName: new Map(), seriesHeaders: [] };
+      const internalFlowMap = internalFlowCsv ? loadSeriesMap(internalFlowCsv) : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
+      const obsMap = obsResolved && obsResolved.text
+        ? loadSeriesByResolvedPath(obsResolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
       const edges = loadEdges(edgesCsv);
       const edgeNodeCanonicalSet = buildEdgeNodeCanonicalSet(edges);
       const iniMissingEdgeNameSet = buildIniMissingEdgeGateNameSet(gates, currentGatesIniNameSet, edgeNodeCanonicalSet);

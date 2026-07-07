@@ -179,6 +179,65 @@
       flex: 1 1 auto;
       overflow: hidden;
     }
+    .detail-chart-body {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .detail-chart-body .detail-chart-plot {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .flow-compare-panel {
+      width: 74px;
+      flex: 0 0 74px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      padding: 2px 0 4px;
+    }
+    .flow-compare-stage {
+      position: relative;
+      width: 44px;
+      height: 124px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(241,245,249,0.88), rgba(226,232,240,0.7));
+      box-shadow: inset 0 0 0 1px rgba(148,163,184,0.18);
+      overflow: hidden;
+    }
+    .flow-compare-bar {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      transform: translateX(-50%);
+      border-radius: 8px 8px 0 0;
+    }
+    .flow-compare-bar.obs {
+      width: 30px;
+      background: rgba(220,38,38,0.52);
+      box-shadow: inset 0 0 0 1px rgba(220,38,38,0.3);
+    }
+    .flow-compare-bar.sim {
+      width: 20px;
+      background: rgba(37,99,235,0.58);
+      box-shadow: inset 0 0 0 1px rgba(37,99,235,0.34);
+    }
+    .flow-compare-caption {
+      font-size: 10px;
+      line-height: 1.25;
+      color: #475569;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .flow-compare-caption strong {
+      display: block;
+      font-size: 11px;
+      color: #0f172a;
+    }
     @media (max-width: 860px) {
       body {
         padding: 10px;
@@ -190,6 +249,20 @@
       .search-wrap input {
         min-width: 100%;
         width: 100%;
+      }
+      .flow-compare-panel {
+        width: 62px;
+        flex-basis: 62px;
+      }
+      .flow-compare-stage {
+        width: 38px;
+        height: 110px;
+      }
+      .flow-compare-bar.obs {
+        width: 26px;
+      }
+      .flow-compare-bar.sim {
+        width: 18px;
       }
     }
   </style>
@@ -294,6 +367,34 @@
       return { x: x, y: y, t: t };
     }
 
+    function buildFlowCompareMarkup(spec) {
+      var compare = spec && spec.flowCompare;
+      if (!compare || compare.enabled !== true) return "";
+      var simVolume = Number(compare.simVolume);
+      var obsVolume = Number(compare.obsVolume);
+      var hasSim = Number.isFinite(simVolume);
+      var hasObs = Number.isFinite(obsVolume);
+      if (!hasSim && !hasObs) return "";
+      var maxVolume = Math.max(
+        hasSim ? Math.abs(simVolume) : 0,
+        hasObs ? Math.abs(obsVolume) : 0,
+        1e-9
+      );
+      var simHeight = hasSim ? Math.max(2, Math.round((Math.abs(simVolume) / maxVolume) * 100)) : 0;
+      var obsHeight = hasObs ? Math.max(2, Math.round((Math.abs(obsVolume) / maxVolume) * 100)) : 0;
+      var completionRatio = Number(compare.completionRatio);
+      var completionText = Number.isFinite(completionRatio) ? (completionRatio * 100).toFixed(1) + "%" : "-";
+      return [
+        '<div class="flow-compare-panel" title="完成度=' + escapeHtml(completionText) + '">',
+        '<div class="flow-compare-stage">',
+        '<div class="flow-compare-bar obs" style="height:' + obsHeight + '%" title="' + escapeHtml(String(compare.obsLabel || "实测积分")) + '=' + escapeHtml(hasObs ? obsVolume.toFixed(3) : "-") + '"></div>',
+        '<div class="flow-compare-bar sim" style="height:' + simHeight + '%" title="' + escapeHtml(String(compare.simLabel || "模拟积分")) + '=' + escapeHtml(hasSim ? simVolume.toFixed(3) : "-") + '"></div>',
+        '</div>',
+        '<div class="flow-compare-caption"><strong>完成度</strong>' + escapeHtml(completionText) + '</div>',
+        '</div>'
+      ].join("");
+    }
+
     var currentSpecs = [];
     var currentPayload = null;
     var currentSearchResults = [];
@@ -352,7 +453,7 @@
     function buildPlotLayout(spec, settings) {
       var fontSize = settings.fontSize;
       return {
-        margin: { l: 44, r: 12, t: 0, b: 28 },
+        margin: { l: 44, r: 12, t: 4, b: 28 },
         paper_bgcolor: "rgba(0,0,0,0)",
         plot_bgcolor: "rgba(15,118,110,0.04)",
         showlegend: settings.showLegend,
@@ -428,6 +529,20 @@
         ].join("");
       }).join("");
       chartListEl.innerHTML = html;
+      list.forEach(function(spec, index) {
+        var host = document.getElementById("standalone-plot-" + index);
+        if (!host) return;
+        var card = host.parentElement;
+        if (!card) return;
+        var body = document.createElement("div");
+        body.className = "detail-chart-body";
+        card.replaceChild(body, host);
+        body.appendChild(host);
+        var compareHtml = buildFlowCompareMarkup(spec);
+        if (compareHtml) {
+          body.insertAdjacentHTML("beforeend", compareHtml);
+        }
+      });
 
       if (!window.Plotly) return;
 
@@ -460,7 +575,6 @@
             }
           });
         });
-
         if (!traces.length) {
           host.innerHTML = '<div class="chart-empty">无数据</div>';
           return;
