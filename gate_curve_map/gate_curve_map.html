@@ -2377,7 +2377,16 @@
       const raw = String(pathValue || '').trim();
       if (!raw) return raw;
       if (isAbsolutePath(raw)) return raw;
-      return joinPath(rootPathEl.value, raw);
+      let rootPath = String(rootPathEl.value || '').trim().replace(/\\+/g, '/');
+      if (
+        rootPath &&
+        !isAbsolutePath(rootPath) &&
+        !rootPath.startsWith('./') &&
+        !rootPath.startsWith('../')
+      ) {
+        rootPath = '../' + rootPath.replace(/^\/+/, '');
+      }
+      return joinPath(rootPath, raw);
     }
 
     async function fetchTextFirst(paths) {
@@ -3228,11 +3237,15 @@
 
     function getObsSeriesForName(name) {
       const key = normalizeHeader(name);
+      const keyCanon = canonicalName(key);
+      if (keyCanon.indexOf('inflow') === 0 || keyCanon.indexOf('leakage') === 0 || keyCanon.indexOf('d') === 0) {
+        return [];
+      }
       const aligned = currentObsAlignedByFlow.get(key);
       if (aligned && aligned.length) return aligned;
       const direct = currentObsMap.byName.get(key);
       if (direct && direct.length) return direct;
-      const canon = currentObsCanonical.get(canonicalName(key));
+      const canon = currentObsCanonical.get(keyCanon);
       if (canon && canon.length) return canon;
       return [];
     }
@@ -3433,21 +3446,21 @@
       const obsHeaders = Array.isArray(obsMap.seriesHeaders) ? obsMap.seriesHeaders : [];
       const flowHeaders = Array.isArray(flowMap.seriesHeaders) ? flowMap.seriesHeaders : [];
       const baseTimeline = Array.isArray(flowMap.timeline) ? flowMap.timeline : [];
-      const allowIndexFallback = String(obsMap && obsMap.format || '') === 'pivot';
       const obsByCanon = new Map();
+      const disallowSyntheticObsPrefixes = ['inflow', 'leakage', 'd'];
       obsHeaders.forEach((name) => {
         const canon = canonicalName(name);
         if (canon && !obsByCanon.has(canon)) obsByCanon.set(canon, name);
       });
       flowHeaders.forEach((flowName, idx) => {
         if (!flowName) return;
+        const flowCanon = canonicalName(flowName);
+        if (disallowSyntheticObsPrefixes.some((prefix) => flowCanon.indexOf(prefix) === 0)) return;
         const byName = obsMap.byName.get(flowName);
         let obsName = byName ? flowName : '';
         if (!obsName) {
-          const canon = canonicalName(flowName);
-          if (canon && obsByCanon.has(canon)) obsName = obsByCanon.get(canon);
+          if (flowCanon && obsByCanon.has(flowCanon)) obsName = obsByCanon.get(flowCanon);
         }
-        if (!obsName && allowIndexFallback && idx < obsHeaders.length) obsName = obsHeaders[idx];
         if (!obsName) return;
         const values = obsMap.byName.get(obsName);
         if (!values || !values.length) return;
