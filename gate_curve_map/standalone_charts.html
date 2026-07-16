@@ -309,6 +309,7 @@
         <option value="300" selected>300</option>
         <option value="600">600</option>
       </select>
+      <button id="refreshDataBtn" type="button" style="display:none;">刷新数据</button>
       <button id="exportImageBtn" type="button">导出图片</button>
     </div>
   </div>
@@ -399,6 +400,57 @@
     var currentPayload = null;
     var currentSearchResults = [];
     var currentSearchActiveIndex = -1;
+
+    function canRefreshFromOpener() {
+      return !!(currentPayload && currentPayload.refreshProvider === "gate-flow");
+    }
+
+    function setRefreshButtonState(loading) {
+      var button = document.getElementById("refreshDataBtn");
+      if (!button) return;
+      if (!canRefreshFromOpener()) {
+        button.style.display = "none";
+        button.disabled = true;
+        button.textContent = "刷新数据";
+        return;
+      }
+      button.style.display = "";
+      button.disabled = !!loading;
+      button.textContent = loading ? "刷新中..." : "刷新数据";
+    }
+
+    async function refreshFromOpener() {
+      if (!canRefreshFromOpener()) return;
+      if (!window.opener || window.opener.closed) {
+        alert("主页面已关闭，无法刷新。请回到主页面重新打开“全部图表(新标签)”。");
+        return;
+      }
+      if (typeof window.opener.getStandaloneGateFlowChartsPayload !== "function") {
+        alert("主页面不支持刷新当前图表，请回到主页面重新打开。");
+        return;
+      }
+      setRefreshButtonState(true);
+      try {
+        var payload = await window.opener.getStandaloneGateFlowChartsPayload({ reload: true });
+        if (!payload || !Array.isArray(payload.specs)) {
+          throw new Error("未获取到最新图表数据");
+        }
+        currentPayload = payload;
+        currentSpecs = payload.specs;
+        document.title = String(payload.title || "图表汇总");
+        document.getElementById("standaloneTitle").textContent = String(payload.title || "图表汇总");
+        document.getElementById("standaloneSubtitle").textContent = String(payload.subtitle || "");
+        renderSpecs(currentSpecs);
+        setChartColumns((document.getElementById("columnCountSelect") || {}).value);
+        updatePlotAppearance();
+        hideSearchSuggest();
+      } catch (error) {
+        console.error(error);
+        alert("刷新失败: " + String(error && error.message ? error.message : error));
+      } finally {
+        setRefreshButtonState(false);
+      }
+    }
 
     function buildGateSearchIndex(specs) {
       return (Array.isArray(specs) ? specs : []).map(function(spec, index) {
@@ -904,8 +956,11 @@
         if (searchWrap && !searchWrap.contains(evt.target)) hideSearchSuggest();
       });
 
+      var refreshBtn = document.getElementById("refreshDataBtn");
+      if (refreshBtn) refreshBtn.addEventListener("click", refreshFromOpener);
       var exportBtn = document.getElementById("exportImageBtn");
       if (exportBtn) exportBtn.addEventListener("click", exportChartsImage);
+      setRefreshButtonState(false);
     }
 
     function readPayloadFromWindowName() {
@@ -954,6 +1009,7 @@
       currentSpecs = payload.specs;
       renderSpecs(currentSpecs);
       bindControls(payload);
+      setRefreshButtonState(false);
 
       try {
         if (key) localStorage.removeItem(key);

@@ -78,6 +78,17 @@
       background: #fff;
       color: var(--text);
     }
+    .field-status {
+      margin-top: 4px;
+      min-height: 16px;
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    .field-status.error {
+      color: #b91c1c;
+      font-weight: 600;
+    }
     .actions {
       display: flex;
       gap: 8px;
@@ -859,6 +870,7 @@
     const obsPathEl = document.getElementById('obsPath');
     const edgesPathEl = document.getElementById('edgesPath');
     const rootPathEl = document.getElementById('rootPath');
+    const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');
     const channelLegendItemsEl = document.getElementById('channelLegendItems');
@@ -891,6 +903,46 @@
     let currentWaterlineView = null;
     let currentStakeMap = {};
     let mapSectionRatio = 0.5;
+
+    function ensureFieldStatusElement(inputEl) {
+      if (!inputEl) return null;
+      const key = inputEl.id || '';
+      if (fieldStatusMap.has(key)) return fieldStatusMap.get(key);
+      const host = inputEl.parentElement;
+      if (!host) return null;
+      const statusEl = document.createElement('div');
+      statusEl.className = 'field-status';
+      host.appendChild(statusEl);
+      fieldStatusMap.set(key, statusEl);
+      return statusEl;
+    }
+
+    function clearFieldStatus(inputEl) {
+      const statusEl = ensureFieldStatusElement(inputEl);
+      if (!statusEl) return;
+      statusEl.textContent = '';
+      statusEl.classList.remove('error');
+    }
+
+    function setFieldError(inputEl, message) {
+      const statusEl = ensureFieldStatusElement(inputEl);
+      if (!statusEl) return;
+      statusEl.textContent = String(message || '');
+      statusEl.classList.add('error');
+    }
+
+    function clearAllFieldStatuses() {
+      [
+        inputPathEl,
+        neighborPathEl,
+        gatesPathEl,
+        seriesPathEl,
+        stageObsPathEl,
+        flowPathEl,
+        obsPathEl,
+        edgesPathEl
+      ].forEach(clearFieldStatus);
+    }
 
     function resizeWaterlinePlot() {
       if (!waterlineCollapsed && waterlinePlotEl && window.Plotly) {
@@ -2430,6 +2482,26 @@
       return result;
     }
 
+    async function fetchConfiguredText(inputEl, options) {
+      const settings = options || {};
+      const required = settings.required !== false;
+      const rawValue = inputEl ? String(inputEl.value || '').trim() : '';
+      clearFieldStatus(inputEl);
+      if (!rawValue) {
+        if (required) {
+          setFieldError(inputEl, '缺失: 未设置路径');
+        }
+        return { path: '', text: '' };
+      }
+      const resolvedPath = resolveDataPath(rawValue);
+      try {
+        return { path: resolvedPath, text: await fetchText(resolvedPath) };
+      } catch (error) {
+        setFieldError(inputEl, '缺失: ' + rawValue);
+        return { path: resolvedPath, text: '' };
+      }
+    }
+
     function isTdFormatPath(path) {
       const text = String(path || '').trim().toLowerCase();
       if (!text) return false;
@@ -2867,6 +2939,10 @@
         defaultColumns: String(title || '').indexOf('水位') >= 0 ? 4 : 2
       };
 
+      if (String(title || '') === '闸门图表（全案例流量）') {
+        payload.refreshProvider = 'gate-flow';
+      }
+
       const popup = window.open('about:blank', '_blank');
       if (!popup) {
         alert('浏览器阻止了新标签页弹出，请允许弹窗后重试。');
@@ -2882,6 +2958,26 @@
         } catch (_) {}
         alert('打开全部图表失败，请重试。');
       }
+    }
+
+    async function getStandaloneGateFlowChartsPayload(options) {
+      const shouldReload = !options || options.reload !== false;
+      if (shouldReload) {
+        await reload();
+      }
+      const subtitleParts = [];
+      const metaText = gatePaneMetaEl ? String(gatePaneMetaEl.textContent || '').trim() : '';
+      const specs = buildAllGateFlowChartSpecs();
+      if (metaText) subtitleParts.push(metaText);
+      subtitleParts.push('图表数量=' + specs.length);
+      subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
+      return {
+        title: '闸门图表（全案例流量）',
+        subtitle: subtitleParts.join(' | '),
+        specs: specs,
+        defaultColumns: 2,
+        refreshProvider: 'gate-flow'
+      };
     }
     function classifyDirectEdgeType(edgeType) {
       const t = Number(edgeType);
@@ -3846,53 +3942,40 @@
 
     async function reload() {
       statsEl.textContent = '正在加载渠道与曲线数据...';
-      const edgeCandidates = buildPathCandidates(edgesPathEl.value.trim(), [
-        'mesh/edges.csv',
-        'mesh/edges_new.csv',
-        'mesh/edges_utf8.csv'
-      ]);
-      const stageCandidates = buildPathCandidates(seriesPathEl.value.trim(), [
-        'output/channel_Gates_Stastic_h1.csv',
-        'input/channel_Gates_Stastic_h1.csv',
-        'output/stage.csv',
-        'output/stage/stage.csv',
-        'input/stage.csv'
-      ]);
+      clearAllFieldStatuses();
       const stageH2Candidates = buildPathCandidates('output/channel_Gates_Stastic_h2.csv', [
         'output/stage_encode.csv',
         'output/stage/stage_encode.csv'
       ]);
-      const stageObsCandidates = buildPathCandidates(stageObsPathEl.value.trim(), [
-        'input/stage_obs_24_td.csv',
-        'input/stage_td.csv',
-        'output/stage_td.csv',
-        'output/stage/stage_td.csv'
-      ]);
-      const flowCandidates = buildPathCandidates(flowPathEl.value.trim(), [
-        'output/channel_Gates_Stastic.csv',
-        'output/Q.csv',
-        'output/channel_Gates_Stastic_Q_action.csv',
-        'output/action.csv'
-      ]);
-      const obsCandidates = buildPathCandidates(obsPathEl.value.trim(), [
-        'input/action_obs.csv',
-        'input/action_td.csv',
-        'output/action/action_td.csv',
-        'output/action_td_.csv'
-      ]);
-      const [inputTxt, neighborTxt, gateCsv, gatesIniTxt, stageResolved, stageH2Resolved, stageObsResolved, flowResolved, obsResolved, edgesCsv, stakeJson] = await Promise.all([
-        fetchText(resolveDataPath(inputPathEl.value.trim())),
-        fetchText(resolveDataPath(neighborPathEl.value.trim())),
-        fetchText(resolveDataPath(gatesPathEl.value.trim())),
+      const [
+        inputResolved,
+        neighborResolved,
+        gatesResolved,
+        gatesIniTxt,
+        stageResolved,
+        stageH2Resolved,
+        stageObsResolved,
+        flowResolved,
+        obsResolved,
+        edgesResolved,
+        stakeJson
+      ] = await Promise.all([
+        fetchConfiguredText(inputPathEl, { required: true }),
+        fetchConfiguredText(neighborPathEl, { required: true }),
+        fetchConfiguredText(gatesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/Gates.ini')).catch(() => ''),
-        fetchTextFirstResolved(stageCandidates),
+        fetchConfiguredText(seriesPathEl, { required: true }),
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
-        fetchTextFirstResolved(stageObsCandidates).catch(() => ({ path: '', text: '' })),
-        fetchTextFirstResolved(flowCandidates),
-        fetchTextFirstResolved(obsCandidates).catch(() => ({ path: '', text: '' })),
-        fetchTextFirst(edgeCandidates),
+        fetchConfiguredText(stageObsPathEl, { required: false }),
+        fetchConfiguredText(flowPathEl, { required: true }),
+        fetchConfiguredText(obsPathEl, { required: false }),
+        fetchConfiguredText(edgesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
       ]);
+      const inputTxt = inputResolved.text;
+      const neighborTxt = neighborResolved.text;
+      const gateCsv = gatesResolved.text;
+      const edgesCsv = edgesResolved.text;
       const gatesFromCsv = loadGateRows(gateCsv);
       const gatesFromIni = buildGatesFromIniAndInput(gatesIniTxt, inputTxt);
       const gatesIniItems = parseGatesIni(gatesIniTxt);
