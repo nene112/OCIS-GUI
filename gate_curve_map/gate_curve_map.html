@@ -711,42 +711,69 @@
       </div>
       <div class="field">
         <label for="caseDirPath">案例目录</label>
-        <div class="field-search-wrap">
-          <input id="caseDirPath" value="sj_zonggan-d0" autocomplete="off" />
-          <div id="caseDirSuggest" class="field-suggest"></div>
+        <div class="field-inline">
+          <div class="field-search-wrap" style="flex:1 1 auto;">
+            <input id="caseDirPath" value="sj_zonggan-d0" autocomplete="off" />
+            <div id="caseDirSuggest" class="field-suggest"></div>
+          </div>
+          <button type="button" id="caseDirLoadBtn" class="secondary">加载</button>
         </div>
       </div>
       <div class="field">
         <label for="inputPath">渠道节点 input.txt</label>
-        <input id="inputPath" value="mesh/input.txt" />
+        <div class="field-inline">
+          <input id="inputPath" value="mesh/input.txt" />
+          <button type="button" id="inputPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="neighborPath">邻接关系 neighborId.txt</label>
-        <input id="neighborPath" value="mesh/neighborId.txt" />
+        <div class="field-inline">
+          <input id="neighborPath" value="mesh/neighborId.txt" />
+          <button type="button" id="neighborPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="gatesPath">闸门位置 CSV</label>
-        <input id="gatesPath" value="mesh/gates_mesh.csv" />
+        <div class="field-inline">
+          <input id="gatesPath" value="mesh/gates_mesh.csv" />
+          <button type="button" id="gatesPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="seriesPath">闸前水位 CSV(H1)</label>
-        <input id="seriesPath" value="output/channel_Gates_Stastic_h1.csv" />
+        <div class="field-inline">
+          <input id="seriesPath" value="output/channel_Gates_Stastic_h1.csv" />
+          <button type="button" id="seriesPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="stageObsPath">实测水位 CSV(默认 stage_obs_24_td.csv)</label>
-        <input id="stageObsPath" value="input/stage_obs_24_td.csv" />
+        <div class="field-inline">
+          <input id="stageObsPath" value="input/stage_obs_24_td.csv" />
+          <button type="button" id="stageObsPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="flowPath">闸门流量 CSV(Q)</label>
-        <input id="flowPath" value="output/channel_Gates_Stastic.csv" />
+        <div class="field-inline">
+          <input id="flowPath" value="output/channel_Gates_Stastic.csv" />
+          <button type="button" id="flowPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="obsPath">实测流量 CSV(默认 action_obs.csv)</label>
-        <input id="obsPath" value="input/action_obs.csv" />
+        <div class="field-inline">
+          <input id="obsPath" value="input/action_obs.csv" />
+          <button type="button" id="obsPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="field">
         <label for="edgesPath">边关系 CSV</label>
-        <input id="edgesPath" value="mesh/edges.csv" />
+        <div class="field-inline">
+          <input id="edgesPath" value="mesh/edges.csv" />
+          <button type="button" id="edgesPathLoadBtn" class="secondary">加载</button>
+        </div>
       </div>
       <div class="actions">
         <button id="reloadBtn">重新加载</button>
@@ -933,6 +960,15 @@
     const rootPathLoadBtnEl = document.getElementById('rootPathLoadBtn');
     const caseDirPathEl = document.getElementById('caseDirPath');
     const caseDirSuggestEl = document.getElementById('caseDirSuggest');
+    const caseDirLoadBtnEl = document.getElementById('caseDirLoadBtn');
+    const inputPathLoadBtnEl = document.getElementById('inputPathLoadBtn');
+    const neighborPathLoadBtnEl = document.getElementById('neighborPathLoadBtn');
+    const gatesPathLoadBtnEl = document.getElementById('gatesPathLoadBtn');
+    const seriesPathLoadBtnEl = document.getElementById('seriesPathLoadBtn');
+    const stageObsPathLoadBtnEl = document.getElementById('stageObsPathLoadBtn');
+    const flowPathLoadBtnEl = document.getElementById('flowPathLoadBtn');
+    const obsPathLoadBtnEl = document.getElementById('obsPathLoadBtn');
+    const edgesPathLoadBtnEl = document.getElementById('edgesPathLoadBtn');
     const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');
@@ -970,6 +1006,11 @@
     let currentCaseDirRootKey = '';
     let currentCaseDirSuggestItems = [];
     let currentCaseDirSuggestIndex = -1;
+    let currentChannelCount = 0;
+    let currentMatchedGates = 0;
+    let currentMissingCoordIniNames = [];
+    let currentGateMeshMatched = false;
+    let currentIniMissingEdgeDisplayNames = [];
 
     function ensureFieldStatusElement(inputEl) {
       if (!inputEl) return null;
@@ -1009,6 +1050,71 @@
         obsPathEl,
         edgesPathEl
       ].forEach(clearFieldStatus);
+    }
+
+    function rebuildStageObsCanonical() {
+      currentStageObsCanonical = new Map();
+      currentStageObsMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentStageObsCanonical.set(canonicalName(key), values);
+      });
+      currentStageObsAlignedByStage = buildObsAlignedMap(currentStageObsMap, currentStageMap);
+    }
+
+    function rebuildFlowCanonical() {
+      currentFlowCanonical = new Map();
+      currentFlowMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentFlowCanonical.set(canonicalName(key), values);
+      });
+      currentInternalFlowCanonical = new Map();
+      currentInternalFlowMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentInternalFlowCanonical.set(canonicalName(key), values);
+      });
+    }
+
+    function rebuildObsCanonical() {
+      currentObsCanonical = new Map();
+      currentObsMap.byName.forEach((values, key) => {
+        if (!values || !values.length) return;
+        currentObsCanonical.set(canonicalName(key), values);
+      });
+      currentObsAlignedByFlow = buildObsAlignedMap(currentObsMap, currentFlowMap);
+    }
+
+    function updateStatsSummary() {
+      statsEl.textContent = [
+        '渠段数量: ' + currentChannelCount,
+        '闸门数量: ' + currentGateRows.length,
+        'Gates.ini 缺少边名映射(按名称): ' + currentIniGatesMissingEdgeSet.size +
+          (currentIniMissingEdgeDisplayNames.length ? (' [' + summarizeNames(currentIniMissingEdgeDisplayNames, 12) + ']') : ''),
+        'Gates.ini 缺少坐标匹配(按名称): ' + currentMissingCoordIniNames.length +
+          (currentMissingCoordIniNames.length ? (' [' + summarizeNames(currentMissingCoordIniNames, 12) + ']') : ''),
+        '坐标来源: ' + (currentGateMeshMatched ? 'gates_mesh.csv 与 Gates.ini 已成功匹配' : '坐标回退为 Gates.ini + input.txt 推算(建议补齐)'),
+        '已匹配闸门: ' + currentMatchedGates,
+        '闸前水位步数: ' + currentStageMap.timeline.length,
+        '实测水位步数: ' + currentStageObsMap.timeline.length,
+        '闸门流量步数: ' + currentFlowMap.timeline.length,
+        '实测流量步数: ' + currentObsMap.timeline.length,
+        '边数量: ' + currentEdges.length,
+        '高程字段: gates_mesh.csv.z',
+        '当前数据根目录: ' + String(rootPathEl.value || '').trim(),
+        '当前案例目录: ' + String(caseDirPathEl.value || '').trim(),
+        '说明: 若图表为空，请先检查 target 目录下的数据文件是否齐全，以及闸门/渠段名称是否一致'
+      ].join('\n');
+    }
+
+    function rerenderCurrentSelection() {
+      const gateName = String(selectedGateName || '').trim();
+      if (gateName) {
+        renderSelectionCharts(gateName);
+        return;
+      }
+      const firstTypeZeroGate = findFirstGateByType(currentGateRows, 0);
+      if (firstTypeZeroGate) {
+        renderSelectionCharts(firstTypeZeroGate);
+      }
     }
 
     function normalizeConfiguredRootPath(pathValue) {
@@ -1141,6 +1247,72 @@
       hideCaseDirSuggest();
       await updateCaseDirSuggest().catch(() => hideCaseDirSuggest());
       await reload();
+    }
+
+    function setLoadingMessage(message) {
+      statsEl.textContent = String(message || '正在加载...');
+    }
+
+    async function reloadStructureData() {
+      await reload();
+    }
+
+    async function reloadStageData() {
+      setLoadingMessage('正在加载闸前水位数据...');
+      const stageResolved = await fetchConfiguredText(seriesPathEl, {
+        required: true,
+        fallbacks: ['input/channel_Gates_Stastic_h1.csv', 'output/stage.csv', 'output/stage/stage.csv', 'input/stage.csv']
+      });
+      currentStageMap = loadSeriesByResolvedPath(stageResolved);
+      rebuildStageObsCanonical();
+      setChannelPaneMeta(currentStageMap.timeline);
+      currentMatchedGates = renderGates(currentGateRows, currentStageMap, currentIniGatesMissingEdgeSet);
+      renderDynamicWaterline(currentStageMap, currentEdges, currentGateRows, currentFlowMap, currentStakeMap);
+      channelLayer.changed();
+      gateLayer.changed();
+      rerenderCurrentSelection();
+      updateStatsSummary();
+    }
+
+    async function reloadStageObsData() {
+      setLoadingMessage('正在加载实测水位数据...');
+      const stageObsResolved = await fetchConfiguredText(stageObsPathEl, { required: false });
+      currentStageObsMap = stageObsResolved && stageObsResolved.text
+        ? loadSeriesByResolvedPath(stageObsResolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      rebuildStageObsCanonical();
+      rerenderCurrentSelection();
+      updateStatsSummary();
+    }
+
+    async function reloadFlowData() {
+      setLoadingMessage('正在加载闸门流量数据...');
+      const flowResolved = await fetchConfiguredText(flowPathEl, {
+        required: true,
+        fallbacks: ['output/Q.csv', 'output/channel_Gates_Stastic_Q_action.csv', 'output/action.csv']
+      });
+      currentFlowMap = loadSeriesByResolvedPath(flowResolved);
+      const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
+      currentInternalFlowMap = internalFlowCsv
+        ? loadSeriesMap(internalFlowCsv)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
+      rebuildFlowCanonical();
+      currentObsAlignedByFlow = buildObsAlignedMap(currentObsMap, currentFlowMap);
+      setGatePaneMeta(currentFlowMap.timeline);
+      renderDynamicWaterline(currentStageMap, currentEdges, currentGateRows, currentFlowMap, currentStakeMap);
+      rerenderCurrentSelection();
+      updateStatsSummary();
+    }
+
+    async function reloadObsData() {
+      setLoadingMessage('正在加载实测流量数据...');
+      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false });
+      currentObsMap = obsResolved && obsResolved.text
+        ? loadSeriesByResolvedPath(obsResolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      rebuildObsCanonical();
+      rerenderCurrentSelection();
+      updateStatsSummary();
     }
 
     function resizeWaterlinePlot() {
@@ -4234,39 +4406,25 @@
       const channelCount = loadChannels(inputTxt, neighborTxt, gates, edges);
       renderDynamicWaterline(stageMap, edges, gates, flowMap, currentStakeMap);
       currentGateRows = gates;
+      currentGateMeshMatched = gateMeshMatched;
+      currentMissingCoordIniNames = missingCoordIniNames;
+      currentIniMissingEdgeDisplayNames = iniMissingEdgeDisplayNames;
+      currentChannelCount = channelCount;
       currentStageMap = stageMap;
       currentStageH2Map = stageH2Map;
       currentStageObsMap = stageObsMap;
-      currentStageObsAlignedByStage = buildObsAlignedMap(stageObsMap, stageMap);
-      currentStageObsCanonical = new Map();
-      currentStageObsMap.byName.forEach((values, key) => {
-        if (!values || !values.length) return;
-        currentStageObsCanonical.set(canonicalName(key), values);
-      });
+      rebuildStageObsCanonical();
       currentFlowMap = flowMap;
       currentInternalFlowMap = internalFlowMap;
-      currentFlowCanonical = new Map();
-      currentFlowMap.byName.forEach((values, key) => {
-        if (!values || !values.length) return;
-        currentFlowCanonical.set(canonicalName(key), values);
-      });
-      currentInternalFlowCanonical = new Map();
-      currentInternalFlowMap.byName.forEach((values, key) => {
-        if (!values || !values.length) return;
-        currentInternalFlowCanonical.set(canonicalName(key), values);
-      });
+      rebuildFlowCanonical();
       setChannelPaneMeta(stageMap.timeline);
       setGatePaneMeta(flowMap.timeline);
       currentObsMap = obsMap;
-      currentObsAlignedByFlow = buildObsAlignedMap(obsMap, flowMap);
-      currentObsCanonical = new Map();
-      currentObsMap.byName.forEach((values, key) => {
-        if (!values || !values.length) return;
-        currentObsCanonical.set(canonicalName(key), values);
-      });
+      rebuildObsCanonical();
       currentEdges = edges;
       currentGateTypeByName = buildGateTypeMapFromEdges(edges);
       const matchedGates = renderGates(gates, stageMap, iniMissingEdgeNameSet);
+      currentMatchedGates = matchedGates;
       selectedGateName = '';
       selectedChannelLabel = '';
       channelLayer.changed();
@@ -4283,26 +4441,7 @@
       if (firstTypeZeroGate) {
         renderSelectionCharts(firstTypeZeroGate);
       }
-
-      statsEl.textContent = [
-        '渠段数量: ' + channelCount,
-        '闸门数量: ' + gates.length,
-        'Gates.ini 缺少边名映射(按名称): ' + iniMissingEdgeNameSet.size +
-          (iniMissingEdgeDisplayNames.length ? (' [' + summarizeNames(iniMissingEdgeDisplayNames, 12) + ']') : ''),
-        'Gates.ini 缺少坐标匹配(按名称): ' + missingCoordIniNames.length +
-          (missingCoordIniNames.length ? (' [' + summarizeNames(missingCoordIniNames, 12) + ']') : ''),
-        '坐标来源: ' + (gateMeshMatched ? 'gates_mesh.csv 与 Gates.ini 已成功匹配' : '坐标回退为 Gates.ini + input.txt 推算(建议补齐)'),
-        '已匹配闸门: ' + matchedGates,
-        '闸前水位步数: ' + stageMap.timeline.length,
-        '实测水位步数: ' + stageObsMap.timeline.length,
-        '闸门流量步数: ' + flowMap.timeline.length,
-        '实测流量步数: ' + obsMap.timeline.length,
-        '边数量: ' + edges.length,
-        '高程字段: gates_mesh.csv.z',
-        '当前数据根目录: ' + String(rootPathEl.value || '').trim(),
-        '当前案例目录: ' + String(caseDirPathEl.value || '').trim(),
-        '说明: 若图表为空，请先检查 target 目录下的数据文件是否齐全，以及闸门/渠段名称是否一致'
-      ].join('\n');
+      updateStatsSummary();
     }
 
     map.on('singleclick', function(evt) {
@@ -4415,6 +4554,78 @@
     if (rootPathLoadBtnEl) {
       rootPathLoadBtnEl.addEventListener('click', () => {
         loadRootPathAndReload().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (caseDirLoadBtnEl) {
+      caseDirLoadBtnEl.addEventListener('click', () => {
+        reloadStructureData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (inputPathLoadBtnEl) {
+      inputPathLoadBtnEl.addEventListener('click', () => {
+        reloadStructureData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (neighborPathLoadBtnEl) {
+      neighborPathLoadBtnEl.addEventListener('click', () => {
+        reloadStructureData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (gatesPathLoadBtnEl) {
+      gatesPathLoadBtnEl.addEventListener('click', () => {
+        reloadStructureData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (edgesPathLoadBtnEl) {
+      edgesPathLoadBtnEl.addEventListener('click', () => {
+        reloadStructureData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (seriesPathLoadBtnEl) {
+      seriesPathLoadBtnEl.addEventListener('click', () => {
+        reloadStageData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (stageObsPathLoadBtnEl) {
+      stageObsPathLoadBtnEl.addEventListener('click', () => {
+        reloadStageObsData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (flowPathLoadBtnEl) {
+      flowPathLoadBtnEl.addEventListener('click', () => {
+        reloadFlowData().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (obsPathLoadBtnEl) {
+      obsPathLoadBtnEl.addEventListener('click', () => {
+        reloadObsData().catch((error) => {
           console.error(error);
           statsEl.textContent = String(error && error.message ? error.message : error);
         });
