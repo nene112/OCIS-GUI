@@ -3305,24 +3305,26 @@
       ].join('');
     }
 
-    function openStandaloneChartsBySpecs(title, paneMetaEl, specs) {
+    function buildStandaloneChartsPayload(title, paneMetaEl, specs, options) {
       const subtitleParts = [];
       const metaText = paneMetaEl ? String(paneMetaEl.textContent || '').trim() : '';
       if (metaText) subtitleParts.push(metaText);
       subtitleParts.push('图表数量=' + (Array.isArray(specs) ? specs.length : 0));
       subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
 
-      const payload = {
+      return {
         title: String(title || ''),
         subtitle: subtitleParts.join(' | '),
         specs: Array.isArray(specs) ? specs : [],
-        defaultColumns: String(title || '').indexOf('水位') >= 0 ? 4 : 2
+        defaultColumns: options && Number.isFinite(options.defaultColumns)
+          ? Number(options.defaultColumns)
+          : (String(title || '').indexOf('水位') >= 0 ? 4 : 2),
+        refreshProvider: options && options.refreshProvider ? String(options.refreshProvider) : ''
       };
+    }
 
-      if (String(title || '') === '闸门图表（全案例流量）') {
-        payload.refreshProvider = 'gate-flow';
-      }
-
+    function openStandaloneChartsBySpecs(title, paneMetaEl, specs, options) {
+      const payload = buildStandaloneChartsPayload(title, paneMetaEl, specs, options);
       const popup = window.open('about:blank', '_blank');
       if (!popup) {
         alert('浏览器阻止了新标签页弹出，请允许弹窗后重试。');
@@ -3341,24 +3343,28 @@
       }
     }
 
+    async function getStandaloneChannelChartsPayload(options) {
+      const shouldReload = !options || options.reload !== false;
+      if (shouldReload) {
+        await reload();
+      }
+      const specs = buildAllChannelChartSpecs();
+      return buildStandaloneChartsPayload('渠段图表（全案例水位）', channelPaneMetaEl, specs, {
+        defaultColumns: 4,
+        refreshProvider: 'channel-stage'
+      });
+    }
+
     async function getStandaloneGateFlowChartsPayload(options) {
       const shouldReload = !options || options.reload !== false;
       if (shouldReload) {
         await reload();
       }
-      const subtitleParts = [];
-      const metaText = gatePaneMetaEl ? String(gatePaneMetaEl.textContent || '').trim() : '';
       const specs = buildAllGateFlowChartSpecs();
-      if (metaText) subtitleParts.push(metaText);
-      subtitleParts.push('图表数量=' + specs.length);
-      subtitleParts.push('生成时间=' + new Date().toLocaleString('zh-CN'));
-      return {
-        title: '闸门图表（全案例流量）',
-        subtitle: subtitleParts.join(' | '),
-        specs: specs,
+      return buildStandaloneChartsPayload('闸门图表（全案例流量）', gatePaneMetaEl, specs, {
         defaultColumns: 2,
         refreshProvider: 'gate-flow'
-      };
+      });
     }
     function classifyDirectEdgeType(edgeType) {
       const t = Number(edgeType);
@@ -4526,12 +4532,18 @@
     }
     if (channelAllChartsBtnEl) {
       channelAllChartsBtnEl.addEventListener('click', () => {
-        openStandaloneChartsBySpecs('渠段图表（全案例水位）', channelPaneMetaEl, buildAllChannelChartSpecs());
+        openStandaloneChartsBySpecs('渠段图表（全案例水位）', channelPaneMetaEl, buildAllChannelChartSpecs(), {
+          defaultColumns: 4,
+          refreshProvider: 'channel-stage'
+        });
       });
     }
     if (gateAllChartsBtnEl) {
       gateAllChartsBtnEl.addEventListener('click', () => {
-        openStandaloneChartsBySpecs('闸门图表（全案例流量）', gatePaneMetaEl, buildAllGateFlowChartSpecs());
+        openStandaloneChartsBySpecs('闸门图表（全案例流量）', gatePaneMetaEl, buildAllGateFlowChartSpecs(), {
+          defaultColumns: 2,
+          refreshProvider: 'gate-flow'
+        });
       });
     }
     if (segmentInfoCloseBtnEl) {

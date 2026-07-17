@@ -401,8 +401,36 @@
     var currentSearchResults = [];
     var currentSearchActiveIndex = -1;
 
+    function getRefreshProviderName() {
+      return String((currentPayload && currentPayload.refreshProvider) || "").trim();
+    }
+
+    function getOpenerRefreshFunction() {
+      var provider = getRefreshProviderName();
+      if (!provider || !window.opener || window.opener.closed) return null;
+      if (provider === "gate-flow" && typeof window.opener.getStandaloneGateFlowChartsPayload === "function") {
+        return window.opener.getStandaloneGateFlowChartsPayload.bind(window.opener);
+      }
+      if (provider === "channel-stage" && typeof window.opener.getStandaloneChannelChartsPayload === "function") {
+        return window.opener.getStandaloneChannelChartsPayload.bind(window.opener);
+      }
+      return null;
+    }
+
+    function applyPayload(payload) {
+      currentPayload = payload || null;
+      currentSpecs = payload && Array.isArray(payload.specs) ? payload.specs : [];
+      document.title = String((payload && payload.title) || "图表汇总");
+      document.getElementById("standaloneTitle").textContent = String((payload && payload.title) || "图表汇总");
+      document.getElementById("standaloneSubtitle").textContent = String((payload && payload.subtitle) || "");
+      renderSpecs(currentSpecs);
+      setChartColumns((document.getElementById("columnCountSelect") || {}).value);
+      updatePlotAppearance();
+      hideSearchSuggest();
+    }
+
     function canRefreshFromOpener() {
-      return !!(currentPayload && currentPayload.refreshProvider === "gate-flow");
+      return !!getRefreshProviderName();
     }
 
     function setRefreshButtonState(loading) {
@@ -425,13 +453,14 @@
         alert("主页面已关闭，无法刷新。请回到主页面重新打开“全部图表(新标签)”。");
         return;
       }
-      if (typeof window.opener.getStandaloneGateFlowChartsPayload !== "function") {
+      var loadPayload = getOpenerRefreshFunction();
+      if (!loadPayload) {
         alert("主页面不支持刷新当前图表，请回到主页面重新打开。");
         return;
       }
       setRefreshButtonState(true);
       try {
-        var payload = await window.opener.getStandaloneGateFlowChartsPayload({ reload: true });
+        var payload = await loadPayload({ reload: true });
         if (!payload || !Array.isArray(payload.specs)) {
           throw new Error("未获取到最新图表数据");
         }
