@@ -89,6 +89,56 @@
       color: #b91c1c;
       font-weight: 600;
     }
+    .field-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .field-inline input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .field-inline button {
+      flex: 0 0 auto;
+      padding: 8px 12px;
+      white-space: nowrap;
+    }
+    .field-search-wrap {
+      position: relative;
+    }
+    .field-suggest {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 20;
+      display: none;
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+    }
+    .field-suggest.show {
+      display: block;
+    }
+    .field-suggest-item {
+      display: block;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 8px 10px;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .field-suggest-item:hover,
+    .field-suggest-item.active {
+      background: rgba(15, 118, 110, 0.08);
+    }
     .actions {
       display: flex;
       gap: 8px;
@@ -653,8 +703,18 @@
       <h1>闸门曲线地图</h1>
       <p>使用 OpenLayers 绘制闸门矢量点。地图默认显示点位与名称，点击闸门后在下方展示关联图表。</p>
       <div class="field">
-        <label for="rootPath">案例根目录</label>
-        <input id="rootPath" value="../data/sj_zonggan-d0" />
+        <label for="rootPath">数据根目录(data 路径)</label>
+        <div class="field-inline">
+          <input id="rootPath" value="../data" />
+          <button type="button" id="rootPathLoadBtn" class="secondary">加载</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="caseDirPath">案例目录</label>
+        <div class="field-search-wrap">
+          <input id="caseDirPath" value="sj_zonggan-d0" autocomplete="off" />
+          <div id="caseDirSuggest" class="field-suggest"></div>
+        </div>
       </div>
       <div class="field">
         <label for="inputPath">渠道节点 input.txt</label>
@@ -870,6 +930,9 @@
     const obsPathEl = document.getElementById('obsPath');
     const edgesPathEl = document.getElementById('edgesPath');
     const rootPathEl = document.getElementById('rootPath');
+    const rootPathLoadBtnEl = document.getElementById('rootPathLoadBtn');
+    const caseDirPathEl = document.getElementById('caseDirPath');
+    const caseDirSuggestEl = document.getElementById('caseDirSuggest');
     const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');
@@ -903,6 +966,10 @@
     let currentWaterlineView = null;
     let currentStakeMap = {};
     let mapSectionRatio = 0.5;
+    let currentCaseDirOptions = [];
+    let currentCaseDirRootKey = '';
+    let currentCaseDirSuggestItems = [];
+    let currentCaseDirSuggestIndex = -1;
 
     function ensureFieldStatusElement(inputEl) {
       if (!inputEl) return null;
@@ -942,6 +1009,138 @@
         obsPathEl,
         edgesPathEl
       ].forEach(clearFieldStatus);
+    }
+
+    function normalizeConfiguredRootPath(pathValue) {
+      let rootPath = String(pathValue || '').trim().replace(/\\+/g, '/');
+      if (
+        rootPath &&
+        !isAbsolutePath(rootPath) &&
+        !rootPath.startsWith('./') &&
+        !rootPath.startsWith('../')
+      ) {
+        rootPath = '../' + rootPath.replace(/^\/+/, '');
+      }
+      return rootPath;
+    }
+
+    function getCaseBasePath() {
+      const rootPath = normalizeConfiguredRootPath(rootPathEl ? rootPathEl.value : '');
+      const caseDir = String(caseDirPathEl ? caseDirPathEl.value : '').trim().replace(/\\+/g, '/').replace(/^\/+|\/+$/g, '');
+      return caseDir ? joinPath(rootPath, caseDir) : rootPath;
+    }
+
+    function normalizeCaseSearchText(value) {
+      return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+    }
+
+    function hideCaseDirSuggest() {
+      if (!caseDirSuggestEl) return;
+      caseDirSuggestEl.classList.remove('show');
+      caseDirSuggestEl.innerHTML = '';
+      currentCaseDirSuggestItems = [];
+      currentCaseDirSuggestIndex = -1;
+    }
+
+    function setActiveCaseDirSuggest(index) {
+      currentCaseDirSuggestIndex = index;
+      if (!caseDirSuggestEl) return;
+      const items = caseDirSuggestEl.querySelectorAll('.field-suggest-item');
+      items.forEach((item, idx) => {
+        item.classList.toggle('active', idx === index);
+      });
+    }
+
+    function applyCaseDirValue(value) {
+      if (!caseDirPathEl) return;
+      caseDirPathEl.value = String(value || '');
+      hideCaseDirSuggest();
+    }
+
+    function renderCaseDirSuggest(options) {
+      if (!caseDirSuggestEl) return;
+      const list = Array.isArray(options) ? options : [];
+      currentCaseDirSuggestItems = list;
+      currentCaseDirSuggestIndex = list.length ? 0 : -1;
+      if (!list.length) {
+        hideCaseDirSuggest();
+        return;
+      }
+      caseDirSuggestEl.innerHTML = list.map((name, idx) =>
+        '<button type="button" class="field-suggest-item' + (idx === 0 ? ' active' : '') + '" data-case-dir="' + escapeHtmlAttr(name) + '">' + escapeHtml(name) + '</button>'
+      ).join('');
+      caseDirSuggestEl.classList.add('show');
+      const buttons = caseDirSuggestEl.querySelectorAll('.field-suggest-item');
+      buttons.forEach((button, idx) => {
+        button.addEventListener('click', () => {
+          applyCaseDirValue(list[idx]);
+        });
+      });
+    }
+
+    async function loadCaseDirOptions() {
+      const rootPath = normalizeConfiguredRootPath(rootPathEl ? rootPathEl.value : '');
+      const rootKey = String(rootPath || '').trim();
+      if (!rootKey) {
+        currentCaseDirOptions = [];
+        currentCaseDirRootKey = '';
+        return [];
+      }
+      if (rootKey === currentCaseDirRootKey && currentCaseDirOptions.length) {
+        return currentCaseDirOptions.slice();
+      }
+      try {
+        const options = [];
+        if (isLocalAbsoluteFsPath(rootKey)) {
+          const response = await fetch(buildFsApiUrl(rootKey, 'list-dir'), { cache: 'no-store' });
+          if (!response.ok) throw new Error('list dir failed');
+          const data = await response.json();
+          (Array.isArray(data && data.items) ? data.items : []).forEach((name) => {
+            const candidate = String(name || '').trim();
+            if (!candidate || candidate === '..') return;
+            if (!options.includes(candidate)) options.push(candidate);
+          });
+        } else {
+          const html = await fetchText(rootKey.endsWith('/') ? rootKey : (rootKey + '/'));
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          doc.querySelectorAll('a[href]').forEach((anchor) => {
+            const href = String(anchor.getAttribute('href') || '').trim();
+            const text = String(anchor.textContent || '').trim();
+            if (!href || href === '../' || href === '..') return;
+            const normalizedHref = href.replace(/\\/g, '/');
+            if (!normalizedHref.endsWith('/')) return;
+            const candidate = String(text || normalizedHref).replace(/\/+$/, '').trim();
+            if (!candidate || candidate === '..') return;
+            if (!options.includes(candidate)) options.push(candidate);
+          });
+        }
+        options.sort((a, b) => a.localeCompare(b, 'zh-CN'));
+        currentCaseDirOptions = options;
+        currentCaseDirRootKey = rootKey;
+        return options.slice();
+      } catch (_) {
+        currentCaseDirOptions = [];
+        currentCaseDirRootKey = rootKey;
+        return [];
+      }
+    }
+
+    async function updateCaseDirSuggest() {
+      if (!caseDirPathEl) return;
+      const query = normalizeCaseSearchText(caseDirPathEl.value);
+      const options = await loadCaseDirOptions();
+      const filtered = !query
+        ? options.slice(0, 20)
+        : options.filter((name) => normalizeCaseSearchText(name).indexOf(query) >= 0).slice(0, 20);
+      renderCaseDirSuggest(filtered);
+    }
+
+    async function loadRootPathAndReload() {
+      currentCaseDirOptions = [];
+      currentCaseDirRootKey = '';
+      hideCaseDirSuggest();
+      await updateCaseDirSuggest().catch(() => hideCaseDirSuggest());
+      await reload();
     }
 
     function resizeWaterlinePlot() {
@@ -2404,7 +2603,7 @@
     }
 
     async function fetchText(path) {
-      const response = await fetch(path, { cache: 'no-store' });
+      const response = await fetch(isLocalAbsoluteFsPath(path) ? buildFsApiUrl(path, 'read') : path, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(path + ' 加载失败: HTTP ' + response.status);
       }
@@ -2420,6 +2619,17 @@
       return base + '/' + child;
     }
 
+    function isLocalAbsoluteFsPath(path) {
+      const v = String(path || '').trim();
+      return /^[a-zA-Z]:[\\/]/.test(v) || /^\\\\/.test(v);
+    }
+
+    function buildFsApiUrl(pathValue, mode) {
+      const url = new URL(mode === 'list-dir' ? '/api/fs/list-dir' : '/api/fs/read', window.location.origin);
+      url.searchParams.set('path', String(pathValue || ''));
+      return url.href;
+    }
+
     function isAbsolutePath(path) {
       const v = String(path || '').trim();
       return /^(https?:)?\/\//i.test(v) || /^[a-zA-Z]:[\\/]/.test(v) || v.startsWith('/');
@@ -2429,16 +2639,7 @@
       const raw = String(pathValue || '').trim();
       if (!raw) return raw;
       if (isAbsolutePath(raw)) return raw;
-      let rootPath = String(rootPathEl.value || '').trim().replace(/\\+/g, '/');
-      if (
-        rootPath &&
-        !isAbsolutePath(rootPath) &&
-        !rootPath.startsWith('./') &&
-        !rootPath.startsWith('../')
-      ) {
-        rootPath = '../' + rootPath.replace(/^\/+/, '');
-      }
-      return joinPath(rootPath, raw);
+      return joinPath(getCaseBasePath(), raw);
     }
 
     async function fetchTextFirst(paths) {
@@ -2495,7 +2696,7 @@
       }
       const resolvedPath = resolveDataPath(rawValue);
       try {
-        return { path: resolvedPath, text: await fetchText(resolvedPath) };
+        return await fetchTextFirstResolved(buildPathCandidates(rawValue, settings.fallbacks));
       } catch (error) {
         setFieldError(inputEl, '缺失: ' + rawValue);
         return { path: resolvedPath, text: '' };
@@ -2557,6 +2758,13 @@
       return String(value || '')
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
     }
@@ -2949,8 +3157,9 @@
         return;
       }
       try {
+        const standaloneUrl = new URL('standalone_charts.html', window.location.href).href;
         popup.name = JSON.stringify(payload);
-        popup.location.replace('standalone_charts.html');
+        popup.location.replace(standaloneUrl);
       } catch (error) {
         console.error(error);
         try {
@@ -3964,10 +4173,16 @@
         fetchConfiguredText(neighborPathEl, { required: true }),
         fetchConfiguredText(gatesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/Gates.ini')).catch(() => ''),
-        fetchConfiguredText(seriesPathEl, { required: true }),
+        fetchConfiguredText(seriesPathEl, {
+          required: true,
+          fallbacks: ['input/channel_Gates_Stastic_h1.csv', 'output/stage.csv', 'output/stage/stage.csv', 'input/stage.csv']
+        }),
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
         fetchConfiguredText(stageObsPathEl, { required: false }),
-        fetchConfiguredText(flowPathEl, { required: true }),
+        fetchConfiguredText(flowPathEl, {
+          required: true,
+          fallbacks: ['output/Q.csv', 'output/channel_Gates_Stastic_Q_action.csv', 'output/action.csv']
+        }),
         fetchConfiguredText(obsPathEl, { required: false }),
         fetchConfiguredText(edgesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
@@ -4084,7 +4299,8 @@
         '实测流量步数: ' + obsMap.timeline.length,
         '边数量: ' + edges.length,
         '高程字段: gates_mesh.csv.z',
-        '当前根目录: ' + String(rootPathEl.value || '').trim(),
+        '当前数据根目录: ' + String(rootPathEl.value || '').trim(),
+        '当前案例目录: ' + String(caseDirPathEl.value || '').trim(),
         '说明: 若图表为空，请先检查 target 目录下的数据文件是否齐全，以及闸门/渠段名称是否一致'
       ].join('\n');
     }
@@ -4189,6 +4405,52 @@
         if (evt.target === segmentInfoModalEl) hideCurrentChannelSegmentInfo();
       });
     }
+    if (rootPathEl) {
+      rootPathEl.addEventListener('input', () => {
+        currentCaseDirOptions = [];
+        currentCaseDirRootKey = '';
+        hideCaseDirSuggest();
+      });
+    }
+    if (rootPathLoadBtnEl) {
+      rootPathLoadBtnEl.addEventListener('click', () => {
+        loadRootPathAndReload().catch((error) => {
+          console.error(error);
+          statsEl.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+    }
+    if (caseDirPathEl) {
+      caseDirPathEl.addEventListener('focus', () => {
+        updateCaseDirSuggest().catch(() => hideCaseDirSuggest());
+      });
+      caseDirPathEl.addEventListener('input', () => {
+        updateCaseDirSuggest().catch(() => hideCaseDirSuggest());
+      });
+      caseDirPathEl.addEventListener('keydown', (evt) => {
+        if (!currentCaseDirSuggestItems.length) {
+          if (evt.key === 'Escape') hideCaseDirSuggest();
+          return;
+        }
+        if (evt.key === 'ArrowDown') {
+          evt.preventDefault();
+          setActiveCaseDirSuggest(Math.min(currentCaseDirSuggestItems.length - 1, currentCaseDirSuggestIndex + 1));
+        } else if (evt.key === 'ArrowUp') {
+          evt.preventDefault();
+          setActiveCaseDirSuggest(Math.max(0, currentCaseDirSuggestIndex - 1));
+        } else if (evt.key === 'Enter') {
+          evt.preventDefault();
+          const target = currentCaseDirSuggestItems[Math.max(0, currentCaseDirSuggestIndex)];
+          if (target) applyCaseDirValue(target);
+        } else if (evt.key === 'Escape') {
+          hideCaseDirSuggest();
+        }
+      });
+    }
+    document.addEventListener('click', (evt) => {
+      const wrap = document.querySelector('.field-search-wrap');
+      if (wrap && !wrap.contains(evt.target)) hideCaseDirSuggest();
+    });
     window.addEventListener('keydown', (evt) => {
       if (evt.key === 'Escape') hideCurrentChannelSegmentInfo();
     });
