@@ -34,12 +34,12 @@ function Resolve-EdgesPath {
     }
   }
 
+  [void]$candidates.Add((Join-Path $repoRoot 'data\sj_zonggan-d0\mesh\edges.csv'))
+  [void]$candidates.Add((Join-Path $repoRoot 'data\sj_zonggan-d0\mesh\edges_new.csv'))
   [void]$candidates.Add((Join-Path $scriptDir 'mesh\edges.csv'))
   [void]$candidates.Add((Join-Path $scriptDir 'mesh\edges_new.csv'))
   [void]$candidates.Add((Join-Path $repoRoot 'data\ph\mesh\edges.csv'))
   [void]$candidates.Add((Join-Path $repoRoot 'data\ph\mesh\edges_new.csv'))
-  [void]$candidates.Add((Join-Path $repoRoot 'data\sj_zonggan-d0\mesh\edges.csv'))
-  [void]$candidates.Add((Join-Path $repoRoot 'data\sj_zonggan-d0\mesh\edges_new.csv'))
 
   foreach($candidate in $candidates) {
     if(Test-Path $candidate) {

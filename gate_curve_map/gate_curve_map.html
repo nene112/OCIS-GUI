@@ -1287,10 +1287,7 @@
 
     async function reloadFlowData() {
       setLoadingMessage('正在加载闸门流量数据...');
-      const flowResolved = await fetchConfiguredText(flowPathEl, {
-        required: true,
-        fallbacks: ['output/Q.csv', 'output/channel_Gates_Stastic_Q_action.csv', 'output/action.csv']
-      });
+      const flowResolved = await fetchConfiguredText(flowPathEl, { required: true });
       currentFlowMap = loadSeriesByResolvedPath(flowResolved);
       const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
       currentInternalFlowMap = internalFlowCsv
@@ -3747,23 +3744,6 @@
         if (flowTimeline.length) return alignSeriesByTimeline(flowTimeline, currentFlowMap.timeline, flowCanon);
         return flowCanon;
       }
-
-      const internalDirect = currentInternalFlowMap.byName.get(key);
-      if (internalDirect && internalDirect.length) {
-        if (flowTimeline.length) {
-          return alignSeriesByTimeline(flowTimeline, currentInternalFlowMap.timeline, internalDirect);
-        }
-        return internalDirect;
-      }
-
-      const internalCanon = currentInternalFlowCanonical.get(canonicalName(key));
-      if (internalCanon && internalCanon.length) {
-        if (flowTimeline.length) {
-          return alignSeriesByTimeline(flowTimeline, currentInternalFlowMap.timeline, internalCanon);
-        }
-        return internalCanon;
-      }
-
       return [];
     }
 
@@ -4357,10 +4337,7 @@
         }),
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
         fetchConfiguredText(stageObsPathEl, { required: false }),
-        fetchConfiguredText(flowPathEl, {
-          required: true,
-          fallbacks: ['output/Q.csv', 'output/channel_Gates_Stastic_Q_action.csv', 'output/action.csv']
-        }),
+        fetchConfiguredText(flowPathEl, { required: true }),
         fetchConfiguredText(obsPathEl, { required: false }),
         fetchConfiguredText(edgesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')

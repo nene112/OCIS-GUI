@@ -502,7 +502,7 @@ const state = {
   lastLegendNodeItems: [],
 };
 
-const DEFAULT_CASE_PATH = '.';
+const DEFAULT_CASE_PATH = 'data/sj_zonggan-d0';
 const TYPE_STYLE_STORAGE_PREFIX = 'psh.topology.typeStyle.v1:';
 const LEGEND_TEXT_STORAGE_KEY = 'psh.topology.legendText.v1';
 const TYPE_STYLE_COLOR_PALETTE = ['#2563eb', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#0ea5e9', '#14b8a6', '#d946ef'];
@@ -8382,6 +8382,9 @@ def _iter_case_dirs(cases_root: Path) -> List[Path]:
     return deduped
 
 
+DEFAULT_CASE_PATH = "data/sj_zonggan-d0"
+
+
 def list_case_dirs(base_dir: Path, cases_root: Optional[Path] = None, current_case_dir: Optional[Path] = None) -> Dict[str, object]:
     data_root = (cases_root or detect_cases_root(base_dir)).resolve()
     cases: List[Dict[str, str]] = []
@@ -8404,7 +8407,7 @@ def list_case_dirs(base_dir: Path, cases_root: Optional[Path] = None, current_ca
             current_case = "."
     available_paths = {item["path"] for item in cases}
     if current_case not in available_paths and cases:
-        current_case = cases[0]["path"]
+      current_case = DEFAULT_CASE_PATH if DEFAULT_CASE_PATH in available_paths else cases[0]["path"]
 
     return {
         "root": _path_to_base_posix(data_root, base_dir),
@@ -9205,8 +9208,8 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._html_response(PLAYGROUND_STYLE_HTML)
-            return
+          self._html_response(build_classic_html(self.base_dir, self.cases_root, self.edges_path, self.startup_warning))
+          return
 
         if parsed.path == "/api/health":
             self._json_response(
@@ -9223,14 +9226,6 @@ class AppHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/classic":
             self._html_response(build_classic_html(self.base_dir, self.cases_root, self.edges_path, self.startup_warning))
-            return
-
-        if parsed.path == "/minimal-drag-test":
-            self._html_response(MINIMAL_DRAG_TEST_HTML)
-            return
-
-        if parsed.path == "/playground-style":
-            self._html_response(PLAYGROUND_STYLE_HTML)
             return
 
         if parsed.path == "/api/graph":
@@ -9669,8 +9664,10 @@ def run_server(host: str, port: int, edges_path: Optional[Path], startup_warning
     class _Handler(AppHandler):
         pass
 
-    _Handler.base_dir = Path(__file__).resolve().parent
-    _Handler.cases_root = _Handler.base_dir
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent.resolve()
+    _Handler.base_dir = repo_root if (repo_root / "data").exists() else script_dir
+    _Handler.cases_root = (_Handler.base_dir / "data").resolve() if (_Handler.base_dir / "data").exists() else _Handler.base_dir
     _Handler.startup_warning = str(startup_warning or "")
     if edges_path is not None:
         _Handler.edges_path = edges_path.resolve()
@@ -9705,7 +9702,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Edges 渠网拓扑建模工具")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8510, help="端口，默认 8510")
-    parser.add_argument("--edges", default="mesh/edges.csv", help="edges.csv 路径")
+    parser.add_argument("--edges", default="data/sj_zonggan-d0/mesh/edges.csv", help="edges.csv 路径")
     return parser.parse_args()
 
 
@@ -9717,6 +9714,12 @@ def main() -> None:
         edges_path = (Path.cwd() / edges_path).resolve()
     if not edges_path.exists():
         candidates = [
+        (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
+        (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
+        (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
+        (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
+        (Path.cwd() / "data" / "ph" / "mesh" / "edges.csv").resolve(),
+        (Path.cwd() / "data" / "ph" / "mesh" / "edges_new.csv").resolve(),
             (Path.cwd() / "mesh" / "edges.csv").resolve(),
             (Path.cwd() / "mesh" / "edges_new.csv").resolve(),
             (Path.cwd() / "ph" / "mesh" / "edges.csv").resolve(),
