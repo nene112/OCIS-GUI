@@ -4,6 +4,7 @@ import argparse
 import json
 import mimetypes
 import threading
+import webbrowser
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -240,6 +241,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve the data workspace for the OpenLayers gate curve viewer")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8610, help="Bind port")
+    parser.add_argument("--open", action="store_true", help="Open the viewer in the default browser after startup")
     return parser.parse_args()
 
 
@@ -249,8 +251,15 @@ def main() -> None:
     Utf8HTTPRequestHandler.text_cache = {}
     handler = partial(Utf8HTTPRequestHandler, directory=str(data_root))
     server = ThreadingHTTPServer((args.host, args.port), handler)
+    viewer_url = f"http://{args.host}:{args.port}/gate_curve_map/gate_curve_map.html"
     print(f"Serving {data_root}")
-    print(f"Open http://{args.host}:{args.port}/gate_curve_map/gate_curve_map.html")
+    print(f"Open {viewer_url}")
+    if args.open:
+        try:
+            webbrowser.open(viewer_url, new=2)
+            print("Browser launch requested.")
+        except Exception as exc:
+            print(f"Browser auto-open failed: {exc}")
     threading.Thread(
         target=warm_text_cache_in_background,
         args=(data_root,),

@@ -762,9 +762,9 @@
         </div>
       </div>
       <div class="field">
-        <label for="obsPath">实测流量 CSV(默认 action_obs.csv)</label>
+        <label for="obsPath">实测流量 CSV(默认 action_obs_td.csv)</label>
         <div class="field-inline">
-          <input id="obsPath" value="input/action_obs.csv" />
+          <input id="obsPath" value="input/action_obs_td.csv" />
           <button type="button" id="obsPathLoadBtn" class="secondary">加载</button>
         </div>
       </div>
@@ -1032,6 +1032,13 @@
       statusEl.classList.remove('error');
     }
 
+    function setFieldMessage(inputEl, message) {
+      const statusEl = ensureFieldStatusElement(inputEl);
+      if (!statusEl) return;
+      statusEl.textContent = String(message || '');
+      statusEl.classList.remove('error');
+    }
+
     function setFieldError(inputEl, message) {
       const statusEl = ensureFieldStatusElement(inputEl);
       if (!statusEl) return;
@@ -1288,12 +1295,20 @@
     async function reloadFlowData() {
       setLoadingMessage('正在加载闸门流量数据...');
       const flowResolved = await fetchConfiguredText(flowPathEl, { required: true });
-      currentFlowMap = loadSeriesByResolvedPath(flowResolved);
+      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] });
+      const flowSource = await resolveGateFlowSource(flowResolved, obsResolved);
+      currentFlowMap = flowSource.flowMap;
+      currentObsMap = flowSource.obsMap;
+      if (flowSource.autoSwitched) {
+        flowPathEl.value = flowSource.flowResolved.path;
+        setFieldMessage(flowPathEl, '已自动切换到与实测时段重叠的流量文件');
+      }
       const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
       currentInternalFlowMap = internalFlowCsv
         ? loadSeriesMap(internalFlowCsv)
         : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
       rebuildFlowCanonical();
+      rebuildObsCanonical();
       currentObsAlignedByFlow = buildObsAlignedMap(currentObsMap, currentFlowMap);
       setGatePaneMeta(currentFlowMap.timeline);
       renderDynamicWaterline(currentStageMap, currentEdges, currentGateRows, currentFlowMap, currentStakeMap);
@@ -1303,7 +1318,7 @@
 
     async function reloadObsData() {
       setLoadingMessage('正在加载实测流量数据...');
-      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false });
+      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] });
       currentObsMap = obsResolved && obsResolved.text
         ? loadSeriesByResolvedPath(obsResolved)
         : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
@@ -2902,21 +2917,222 @@
       return null;
     }
 
-    function buildPlotPoints(values, timeline) {
+    function buildPlotPoints(seriesOrValues, timeline) {
       const x = [];
       const y = [];
       const timeLabels = [];
-      const series = Array.isArray(values) ? values : [];
-      const t = Array.isArray(timeline) ? timeline : [];
+      const seriesConfig = Array.isArray(seriesOrValues) ? { values: seriesOrValues } : (seriesOrValues || {});
+      const series = Array.isArray(seriesConfig.values) ? seriesConfig.values : [];
+      const defaultTimeline = Array.isArray(timeline) ? timeline : [];
+      const xTimeline = Array.isArray(seriesConfig.xTimeline) ? seriesConfig.xTimeline : defaultTimeline;
+      const explicitXValues = Array.isArray(seriesConfig.xValues) ? seriesConfig.xValues : null;
+      const xMode = String(seriesConfig.xMode || '').trim().toLowerCase();
+      const useTimelineX = xMode === 'time' || (xMode !== 'index' && Array.isArray(seriesConfig.xTimeline) && seriesConfig.xTimeline.length);
       const n = series.length;
       for (let i = 0; i < n; i += 1) {
         const v = series[i];
         if (!Number.isFinite(v)) continue;
+        const label = String(xTimeline[i] || defaultTimeline[i] || '');
+        const timeValue = parseTimelineInstant(label);
+        const explicitX = explicitXValues ? Number(explicitXValues[i]) : NaN;
+        const xValue = Number.isFinite(explicitX)
+          ? explicitX
+          : (useTimelineX && Number.isFinite(timeValue) ? timeValue : (i + 1));
+        if (!Number.isFinite(xValue)) continue;
         y.push(v);
-        x.push(i + 1);
-        timeLabels.push(String(t[i] || ''));
+        x.push(xValue);
+        timeLabels.push(label);
       }
       return { x, y, timeLabels };
+    }
+
+    function buildSequentialXValues(count) {
+      const n = Math.max(0, Number(count) || 0);
+      return Array.from({ length: n }, (_, idx) => idx + 1);
+    }
+
+    function buildIndexTimelineAxisConfig(timeline) {
+      const labels = Array.isArray(timeline) ? timeline : [];
+      const count = labels.length;
+      if (!count) {
+        return {
+          type: 'linear',
+          title: '模拟时间步序号'
+        };
+      }
+      const maxVisibleTicks = 8;
+      const tickvals = [];
+      const stride = count <= maxVisibleTicks
+        ? 1
+        : Math.max(1, Math.ceil((count - 1) / (maxVisibleTicks - 1)));
+      for (let i = 0; i < count; i += stride) {
+        tickvals.push(i + 1);
+      }
+      if (tickvals[tickvals.length - 1] !== count) tickvals.push(count);
+      return {
+        type: 'linear',
+        title: '模拟时间步序号',
+        range: [1, count],
+        tickmode: 'array',
+        tickvals: tickvals,
+        ticktext: tickvals.map((value) => String(value))
+      };
+    }
+
+    function buildTimelineAxisConfig(timeline) {
+      const labels = Array.isArray(timeline) ? timeline : [];
+      const fullTickVals = [];
+      const fullTickText = [];
+      for (let i = 0; i < labels.length; i += 1) {
+        const raw = String(labels[i] || '');
+        const ts = parseTimelineInstant(raw);
+        if (!Number.isFinite(ts)) continue;
+        fullTickVals.push(ts);
+        fullTickText.push(formatTimeLabel(raw));
+      }
+      if (!fullTickVals.length) {
+        return {
+          type: 'linear',
+          title: '时间步序号'
+        };
+      }
+      const first = fullTickVals[0];
+      const last = fullTickVals[fullTickVals.length - 1];
+      let dtick = null;
+      for (let i = 1; i < fullTickVals.length; i += 1) {
+        const step = fullTickVals[i] - fullTickVals[i - 1];
+        if (Number.isFinite(step) && step > 0) {
+          dtick = step;
+          break;
+        }
+      }
+      const maxVisibleTicks = 8;
+      const tickvals = [];
+      const ticktext = [];
+      if (fullTickVals.length <= maxVisibleTicks) {
+        tickvals.push(...fullTickVals);
+        ticktext.push(...fullTickText);
+      } else {
+        const step = Math.max(1, Math.ceil((fullTickVals.length - 1) / (maxVisibleTicks - 1)));
+        for (let i = 0; i < fullTickVals.length; i += step) {
+          tickvals.push(fullTickVals[i]);
+          ticktext.push(fullTickText[i]);
+        }
+        const lastIdx = fullTickVals.length - 1;
+        if (tickvals[tickvals.length - 1] !== fullTickVals[lastIdx]) {
+          tickvals.push(fullTickVals[lastIdx]);
+          ticktext.push(fullTickText[lastIdx]);
+        }
+      }
+      return {
+        type: 'linear',
+        title: '时间',
+        range: [first, last],
+        tickmode: 'array',
+        tickvals: tickvals,
+        ticktext: ticktext,
+        dtick: dtick
+      };
+    }
+
+    function getRawSeriesWithTimeline(seriesMap, seriesCanonical, name) {
+      const key = normalizeHeader(name);
+      const direct = seriesMap && seriesMap.byName instanceof Map ? seriesMap.byName.get(key) : null;
+      if (direct && direct.length) {
+        return {
+          values: direct,
+          timeline: Array.isArray(seriesMap.timeline) ? seriesMap.timeline : []
+        };
+      }
+      const canon = canonicalName(key);
+      if (seriesMap && seriesMap.byName instanceof Map) {
+        for (const [rawName, values] of seriesMap.byName.entries()) {
+          if (canonicalName(rawName) === canon && Array.isArray(values) && values.length) {
+            return {
+              values: values,
+              timeline: Array.isArray(seriesMap.timeline) ? seriesMap.timeline : []
+            };
+          }
+        }
+      }
+      const canonValues = seriesCanonical instanceof Map ? seriesCanonical.get(canon) : null;
+      if (canonValues && canonValues.length) {
+        return {
+          values: canonValues,
+          timeline: Array.isArray(seriesMap.timeline) ? seriesMap.timeline : []
+        };
+      }
+      return { values: [], timeline: [] };
+    }
+
+    function projectTimeToSimIndex(baseTimeline, targetTime) {
+      const baseLabels = Array.isArray(baseTimeline) ? baseTimeline : [];
+      const targetMs = parseTimelineInstant(targetTime);
+      if (!Number.isFinite(targetMs) || baseLabels.length < 1) return NaN;
+
+      const points = [];
+      for (let i = 0; i < baseLabels.length; i += 1) {
+        const ms = parseTimelineInstant(baseLabels[i]);
+        if (!Number.isFinite(ms)) continue;
+        points.push({ ms, x: i + 1 });
+      }
+      if (!points.length) return NaN;
+      if (points.length === 1) return points[0].ms === targetMs ? points[0].x : NaN;
+
+      for (let i = 0; i < points.length; i += 1) {
+        if (points[i].ms === targetMs) return points[i].x;
+      }
+
+      if (targetMs < points[0].ms) {
+        const p0 = points[0];
+        const p1 = points[1];
+        if (p1.ms <= p0.ms) return NaN;
+        return p0.x + ((targetMs - p0.ms) / (p1.ms - p0.ms)) * (p1.x - p0.x);
+      }
+
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = points[i - 1];
+        const curr = points[i];
+        if (targetMs < curr.ms) {
+          if (curr.ms <= prev.ms) return NaN;
+          return prev.x + ((targetMs - prev.ms) / (curr.ms - prev.ms)) * (curr.x - prev.x);
+        }
+      }
+
+      const last = points[points.length - 1];
+      const prev = points[points.length - 2];
+      if (last.ms <= prev.ms) return NaN;
+      return prev.x + ((targetMs - prev.ms) / (last.ms - prev.ms)) * (last.x - prev.x);
+    }
+
+    function buildSeriesHoverTemplate(axisMode) {
+      return axisMode === 'sim-index'
+        ? '模拟步序=%{x:.3f}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>'
+        : '横轴=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>';
+    }
+
+    function projectSeriesToSimIndex(baseTimeline, sourceTimeline, sourceValues) {
+      const values = Array.isArray(sourceValues) ? sourceValues : [];
+      const timeline = Array.isArray(sourceTimeline) ? sourceTimeline : [];
+      const projectedValues = [];
+      const projectedTimeline = [];
+      const projectedXValues = [];
+      const n = Math.min(values.length, timeline.length);
+      for (let i = 0; i < n; i += 1) {
+        const value = values[i];
+        if (!Number.isFinite(value)) continue;
+        const rawTime = String(timeline[i] || '');
+        const projectedX = projectTimeToSimIndex(baseTimeline, rawTime);
+        if (!Number.isFinite(projectedX)) continue;
+        projectedValues.push(value);
+        projectedTimeline.push(rawTime);
+        projectedXValues.push(projectedX);
+      }
+      return {
+        values: projectedValues,
+        timeline: projectedTimeline,
+        xValues: projectedXValues
+      };
     }
 
     function toGateCardKey(name) {
@@ -3038,6 +3254,71 @@
       return Number.isFinite(ts) ? ts : NaN;
     }
 
+    function getTimelineRange(timeline) {
+      const labels = Array.isArray(timeline) ? timeline : [];
+      let start = NaN;
+      let end = NaN;
+      for (let i = 0; i < labels.length; i += 1) {
+        const ts = parseTimelineInstant(labels[i]);
+        if (!Number.isFinite(ts)) continue;
+        if (!Number.isFinite(start)) start = ts;
+        end = ts;
+      }
+      return { start, end };
+    }
+
+    function timelinesOverlap(aTimeline, bTimeline) {
+      const a = getTimelineRange(aTimeline);
+      const b = getTimelineRange(bTimeline);
+      if (!Number.isFinite(a.start) || !Number.isFinite(a.end) || !Number.isFinite(b.start) || !Number.isFinite(b.end)) {
+        return false;
+      }
+      return a.start <= b.end && b.start <= a.end;
+    }
+
+    async function resolveGateFlowSource(flowResolved, obsResolved) {
+      const selected = loadSeriesByResolvedPath(flowResolved);
+      const obsMap = obsResolved && obsResolved.text
+        ? loadSeriesByResolvedPath(obsResolved)
+        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      if (!obsMap.timeline.length || !selected.timeline.length || timelinesOverlap(selected.timeline, obsMap.timeline)) {
+        return {
+          flowResolved,
+          flowMap: selected,
+          obsMap,
+          autoSwitched: false
+        };
+      }
+
+      const fallbackResolved = await fetchTextFirstResolved(buildPathCandidates('output/action.csv', ['output/action_td.csv']))
+        .catch(() => ({ path: '', text: '' }));
+      if (!fallbackResolved.text) {
+        return {
+          flowResolved,
+          flowMap: selected,
+          obsMap,
+          autoSwitched: false
+        };
+      }
+
+      const fallbackMap = loadSeriesByResolvedPath(fallbackResolved);
+      if (!fallbackMap.timeline.length || !timelinesOverlap(fallbackMap.timeline, obsMap.timeline)) {
+        return {
+          flowResolved,
+          flowMap: selected,
+          obsMap,
+          autoSwitched: false
+        };
+      }
+
+      return {
+        flowResolved: fallbackResolved,
+        flowMap: fallbackMap,
+        obsMap,
+        autoSwitched: true
+      };
+    }
+
     function buildTimelineStepSeconds(timeline, valueCount) {
       const count = Math.max(0, Number(valueCount) || 0);
       if (count <= 1) return [];
@@ -3114,10 +3395,29 @@
           (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m') : '');
 
         const seriesList = [
-          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+          {
+            label: '模拟',
+            values: values,
+            xTimeline: Array.isArray(currentStageMap.timeline) ? currentStageMap.timeline : [],
+            xMode: 'time',
+            color: '#0f766e',
+            dash: 'solid',
+            mode: 'lines'
+          }
         ];
-        if (hasFiniteValue(obsValues)) {
-          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+        const rawObs = getRawStageObsSeriesForName(name);
+        if (hasFiniteValue(rawObs.values)) {
+          seriesList.push({
+            label: '实测',
+            values: rawObs.values,
+            xTimeline: rawObs.timeline,
+            xMode: 'time',
+            color: '#dc2626',
+            dash: 'solid',
+            mode: 'markers',
+            markerColor: '#dc2626',
+            markerSize: 5
+          });
         }
 
         specs.push({
@@ -3169,16 +3469,39 @@
           ' | 完成度=' + (flowCompare.completionRatio == null ? '-' : (flowCompare.completionRatio * 100).toFixed(1) + '%');
 
         const seriesList = [
-          { label: '模拟', values: values, color: '#0f766e', dash: 'solid', mode: 'lines' }
+          {
+            label: '模拟',
+            values: values,
+            xTimeline: timeline,
+            xValues: buildSequentialXValues(timeline.length),
+            xMode: 'index',
+            color: '#0f766e',
+            dash: 'solid',
+            mode: 'lines'
+          }
         ];
-        if (hasFiniteValue(obsValues)) {
-          seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', dash: 'solid', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+        const rawObs = getRawObsSeriesForName(name);
+        const projectedObs = projectSeriesToSimIndex(timeline, rawObs.timeline, rawObs.values);
+        if (hasFiniteValue(projectedObs.values)) {
+          seriesList.push({
+            label: '实测',
+            values: projectedObs.values,
+            xTimeline: projectedObs.timeline,
+            xValues: projectedObs.xValues,
+            xMode: 'index',
+            color: '#dc2626',
+            dash: 'solid',
+            mode: 'markers',
+            markerColor: '#dc2626',
+            markerSize: 5
+          });
         }
 
         specs.push({
           title: name,
           subtitle: '闸门流量过程线',
           timeline: timeline,
+          xAxisMode: 'sim-index',
           yUnit: 'm^3/s',
           headerMeta: headerMeta,
           seriesList: seriesList,
@@ -3247,14 +3570,133 @@
         '<script id="standaloneChartSpecs" type="application/json">' + safeSpecsJson + '<\\/script>',
         '<script>',
         '(function(){',
+        '  function parseTimelineInstant(value){',
+        '    var text = String(value || "").trim();',
+        '    if (!text) return NaN;',
+        '    var normalized = text.replace(/\\//g, "-");',
+        '    var ts = Date.parse(normalized);',
+        '    if (Number.isFinite(ts)) return ts;',
+        '    ts = Date.parse(normalized.replace(" ", "T"));',
+        '    return Number.isFinite(ts) ? ts : NaN;',
+        '  }',
+        '  function formatTimeLabel(raw){',
+        '    var text = String(raw || "").trim();',
+        '    if (!text) return "-";',
+        '    if (text.indexOf(" ") > -1) {',
+        '      var parts = text.split(" ");',
+        '      var date = parts[0] || "";',
+        '      var hhmm = String(parts[1] || "").slice(0, 5);',
+        '      if (hhmm) return date.slice(5) + " " + hhmm;',
+        '    }',
+        '    return text.length > 12 ? text.slice(0, 12) : text;',
+        '  }',
+        '  function buildIndexTimelineAxisConfig(timeline){',
+        '    var labels = Array.isArray(timeline) ? timeline : [];',
+        '    var count = labels.length;',
+        '    if (!count) return { type: "linear", title: "模拟时间步序号" };',
+        '    var maxVisibleTicks = 8;',
+        '    var tickvals = [];',
+        '    var stride = count <= maxVisibleTicks ? 1 : Math.max(1, Math.ceil((count - 1) / (maxVisibleTicks - 1)));',
+        '    for (var i = 0; i < count; i += stride) tickvals.push(i + 1);',
+        '    if (tickvals[tickvals.length - 1] !== count) tickvals.push(count);',
+        '    return { type: "linear", title: "模拟时间步序号", range: [1, count], tickmode: "array", tickvals: tickvals, ticktext: tickvals.map(String) };',
+        '  }',
+        '  function buildTimelineAxisConfig(timeline){',
+        '    var labels = Array.isArray(timeline) ? timeline : [];',
+        '    var fullTickVals = [];',
+        '    var fullTickText = [];',
+        '    for (var i = 0; i < labels.length; i += 1) {',
+        '      var raw = String(labels[i] || "");',
+        '      var ts = parseTimelineInstant(raw);',
+        '      if (!Number.isFinite(ts)) continue;',
+        '      fullTickVals.push(ts);',
+        '      fullTickText.push(formatTimeLabel(raw));',
+        '    }',
+        '    if (!fullTickVals.length) return { type: "linear", title: "时间步序号" };',
+        '    var first = fullTickVals[0];',
+        '    var last = fullTickVals[fullTickVals.length - 1];',
+        '    var dtick = null;',
+        '    for (var j = 1; j < fullTickVals.length; j += 1) {',
+        '      var step = fullTickVals[j] - fullTickVals[j - 1];',
+        '      if (Number.isFinite(step) && step > 0) { dtick = step; break; }',
+        '    }',
+        '    var maxVisibleTicks = 8;',
+        '    var tickvals = [];',
+        '    var ticktext = [];',
+        '    if (fullTickVals.length <= maxVisibleTicks) {',
+        '      tickvals = fullTickVals.slice();',
+        '      ticktext = fullTickText.slice();',
+        '    } else {',
+        '      var stride = Math.max(1, Math.ceil((fullTickVals.length - 1) / (maxVisibleTicks - 1)));',
+        '      for (var k = 0; k < fullTickVals.length; k += stride) {',
+        '        tickvals.push(fullTickVals[k]);',
+        '        ticktext.push(fullTickText[k]);',
+        '      }',
+        '      var lastIdx = fullTickVals.length - 1;',
+        '      if (tickvals[tickvals.length - 1] !== fullTickVals[lastIdx]) {',
+        '        tickvals.push(fullTickVals[lastIdx]);',
+        '        ticktext.push(fullTickText[lastIdx]);',
+        '      }',
+        '    }',
+        '    return { type: "linear", title: "时间", range: [first, last], tickmode: "array", tickvals: tickvals, ticktext: ticktext, dtick: dtick };',
+        '  }',
+        '  function projectTimeToSimIndex(baseTimeline, targetTime){',
+        '    var baseLabels = Array.isArray(baseTimeline) ? baseTimeline : [];',
+        '    var targetMs = parseTimelineInstant(targetTime);',
+        '    if (!Number.isFinite(targetMs) || !baseLabels.length) return NaN;',
+        '    var points = [];',
+        '    for (var i = 0; i < baseLabels.length; i += 1) {',
+        '      var ms = parseTimelineInstant(baseLabels[i]);',
+        '      if (!Number.isFinite(ms)) continue;',
+        '      points.push({ ms: ms, x: i + 1 });',
+        '    }',
+        '    if (!points.length) return NaN;',
+        '    if (points.length === 1) return points[0].ms === targetMs ? points[0].x : NaN;',
+        '    for (var j = 0; j < points.length; j += 1) {',
+        '      if (points[j].ms === targetMs) return points[j].x;',
+        '    }',
+        '    if (targetMs < points[0].ms) {',
+        '      var p0 = points[0];',
+        '      var p1 = points[1];',
+        '      if (p1.ms <= p0.ms) return NaN;',
+        '      return p0.x + ((targetMs - p0.ms) / (p1.ms - p0.ms)) * (p1.x - p0.x);',
+        '    }',
+        '    for (var k = 1; k < points.length; k += 1) {',
+        '      var prev = points[k - 1];',
+        '      var curr = points[k];',
+        '      if (targetMs < curr.ms) {',
+        '        if (curr.ms <= prev.ms) return NaN;',
+        '        return prev.x + ((targetMs - prev.ms) / (curr.ms - prev.ms)) * (curr.x - prev.x);',
+        '      }',
+        '    }',
+        '    var last = points[points.length - 1];',
+        '    var beforeLast = points[points.length - 2];',
+        '    if (last.ms <= beforeLast.ms) return NaN;',
+        '    return beforeLast.x + ((targetMs - beforeLast.ms) / (last.ms - beforeLast.ms)) * (last.x - beforeLast.x);',
+        '  }',
+        '  function buildSeriesHoverTemplate(axisMode){',
+        '    return axisMode === "sim-index"',
+        '      ? "模拟步序=%{x:.3f}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>"',
+        '      : "横轴=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>";',
+        '  }',
         '  function buildPlotPoints(series, timeline){',
         '    var y=[]; var x=[]; var t=[];',
-        '    var values = Array.isArray(series)?series:[];',
+        '    var cfg = Array.isArray(series) ? { values: series } : (series || {});',
+        '    var values = Array.isArray(cfg.values)?cfg.values:[];',
         '    var labels = Array.isArray(timeline)?timeline:[];',
+        '    var xTimeline = Array.isArray(cfg.xTimeline) ? cfg.xTimeline : labels;',
+        '    var explicitXValues = Array.isArray(cfg.xValues) ? cfg.xValues : null;',
+        '    var xMode = String(cfg.xMode || "").trim().toLowerCase();',
+        '    var useTimelineX = xMode === "time" || (xMode !== "index" && Array.isArray(cfg.xTimeline) && cfg.xTimeline.length);',
         '    for(var i=0;i<values.length;i+=1){',
         '      var v = values[i];',
         '      if (!Number.isFinite(v)) continue;',
-        '      y.push(v); x.push(i+1); t.push(String(labels[i]||""));',
+        '      var label = String(xTimeline[i] || labels[i] || "");',
+        '      var ts = parseTimelineInstant(label);',
+        '      var explicitX = explicitXValues ? Number(explicitXValues[i]) : NaN;',
+        '      var xValue = Number.isFinite(explicitX) ? explicitX : (useTimelineX && Number.isFinite(ts) ? ts : (i+1));',
+        '      if (!Number.isFinite(xValue)) continue;',
+        '      y.push(v); x.push(xValue); t.push(label);',
         '    }',
         '    return {x:x,y:y,t:t};',
         '  }',
@@ -3270,26 +3712,29 @@
         '      if (!host) continue;',
         '      var traces = [];',
         '      var list = Array.isArray(spec.seriesList) ? spec.seriesList : [];',
+        '      var axisMode = String(spec.xAxisMode || "").trim().toLowerCase();',
+        '      var hoverTemplate = buildSeriesHoverTemplate(axisMode);',
         '      for(var j=0;j<list.length;j+=1){',
         '        var s = list[j] || {};',
-        '        var pts = buildPlotPoints(s.values, spec.timeline);',
+        '        var pts = buildPlotPoints(s, spec.timeline);',
         '        if (!pts.y.length) continue;',
         '        traces.push({',
         '          x: pts.x, y: pts.y, customdata: pts.t, type: "scatter",',
         '          mode: String(s.mode || "lines"), name: String(s.label || ""),',
-        '          hovertemplate: "步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>",',
+        '          hovertemplate: hoverTemplate,',
         '          line: { color: String(s.color || "#0f766e"), width: 2, dash: String(s.dash || "solid") },',
         '          marker: { color: String(s.markerColor || s.color || "#0f766e"), size: Number(s.markerSize || 5) }',
         '        });',
         '      }',
         '      if (!traces.length) { host.innerHTML = "<div class=\\"chart-empty\\">无数据</div>"; continue; }',
+        '      var axisConfig = axisMode === "sim-index" ? buildIndexTimelineAxisConfig(spec.timeline) : buildTimelineAxisConfig(spec.timeline);',
         '      Plotly.newPlot(host, traces, {',
         '        margin: { l: 44, r: 12, t: 0, b: 28 },',
         '        paper_bgcolor: "rgba(0,0,0,0)",',
         '        plot_bgcolor: "rgba(15,118,110,0.04)",',
         '        showlegend: true,',
         '        legend: { orientation: "h", x: 0, y: 1.2, font: { size: 10 } },',
-        '        xaxis: { title: { text: "时间步序号", standoff: 2, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.18)", zeroline: false, automargin: true },',
+        '        xaxis: { type: axisConfig.type, range: axisConfig.range, tickmode: axisConfig.tickmode, tickvals: axisConfig.tickvals, ticktext: axisConfig.ticktext, dtick: axisConfig.dtick, title: { text: axisConfig.title, standoff: 2, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.18)", zeroline: false, automargin: true },',
         '        yaxis: { title: { text: String(spec.yUnit || ""), standoff: 4, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.22)", zeroline: false, nticks: 5, automargin: true }',
         '      }, { displayModeBar: false, responsive: true, staticPlot: false, locale: "zh-CN" });',
         '    }',
@@ -3481,12 +3926,13 @@
       } catch (_) {}
     }
 
-    function queuePlotlyChart(chartId, seriesList, timeline, yUnit) {
+    function queuePlotlyChart(chartId, seriesList, timeline, yUnit, axisOptions) {
       pendingPlotlyCharts.push({
         id: chartId,
         seriesList: Array.isArray(seriesList) ? seriesList : [],
         timeline: Array.isArray(timeline) ? timeline : [],
-        yUnit: String(yUnit || '')
+        yUnit: String(yUnit || ''),
+        axisOptions: axisOptions || {}
       });
     }
 
@@ -3498,8 +3944,10 @@
         const host = document.getElementById(task.id);
         if (!host) return;
         const traces = [];
+        const axisMode = String(task.axisOptions && task.axisOptions.mode || '').trim().toLowerCase();
+        const hoverTemplate = buildSeriesHoverTemplate(axisMode);
         task.seriesList.forEach((series) => {
-          const points = buildPlotPoints(series.values, task.timeline);
+          const points = buildPlotPoints(series, task.timeline);
           if (!points.y.length) return;
           const mode = String(series.mode || 'lines');
           traces.push({
@@ -3509,7 +3957,7 @@
             type: 'scatter',
             mode,
             name: String(series.label || ''),
-            hovertemplate: '步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>',
+            hovertemplate: hoverTemplate,
             line: {
               color: String(series.color || '#0f766e'),
               width: 2,
@@ -3526,6 +3974,10 @@
           return;
         }
 
+        const axisConfig = axisMode === 'sim-index'
+          ? buildIndexTimelineAxisConfig(task.timeline)
+          : buildTimelineAxisConfig(task.timeline);
+
         const layout = {
           margin: { l: 44, r: 12, t: 0, b: 28 },
           paper_bgcolor: 'rgba(0,0,0,0)',
@@ -3533,7 +3985,13 @@
           showlegend: true,
           legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 10 } },
           xaxis: {
-            title: { text: '时间步序号', standoff: 2, font: { size: 10 } },
+            type: axisConfig.type,
+            range: axisConfig.range,
+            tickmode: axisConfig.tickmode,
+            tickvals: axisConfig.tickvals,
+            ticktext: axisConfig.ticktext,
+            dtick: axisConfig.dtick,
+            title: { text: axisConfig.title, standoff: 2, font: { size: 10 } },
             tickfont: { size: 10, color: '#64748b' },
             showgrid: true,
             gridcolor: 'rgba(148,163,184,0.18)',
@@ -3593,13 +4051,51 @@
       const maxValue = finiteValues.length ? Math.max.apply(null, finiteValues) : null;
       const obsLastValue = getLastFiniteValue(obsValues);
       const chartId = 'plotly-chart-' + (++plotlyChartSeq);
+      const useSimIndexAxis = String(opts.xAxisMode || '').trim().toLowerCase() === 'sim-index';
       const seriesList = [
-        { label: '模拟', values: values, color: '#0f766e', dash: 'solid' }
+        {
+          label: '模拟',
+          values: values,
+          xTimeline: opts.timeline,
+          xValues: useSimIndexAxis ? buildSequentialXValues(Array.isArray(opts.timeline) ? opts.timeline.length : values.length) : null,
+          xMode: useSimIndexAxis ? 'index' : 'time',
+          color: '#0f766e',
+          dash: 'solid'
+        }
       ];
-      if (obsFinite.length) {
-        seriesList.push({ label: '实测', values: obsValues, color: '#dc2626', mode: 'markers', markerColor: '#dc2626', markerSize: 5 });
+      const rawObsSeries = opts.rawObsSeries || null;
+      const hasRawObs = !!(rawObsSeries && hasFiniteValue(rawObsSeries.values));
+      if (hasRawObs) {
+        const projectedObs = useSimIndexAxis
+          ? projectSeriesToSimIndex(opts.timeline, rawObsSeries.timeline, rawObsSeries.values)
+          : rawObsSeries;
+        seriesList.push({
+          label: '实测',
+          values: projectedObs.values,
+          xTimeline: projectedObs.timeline,
+          xValues: projectedObs.xValues,
+          xMode: useSimIndexAxis ? 'index' : 'time',
+          color: '#dc2626',
+          mode: 'markers',
+          markerColor: '#dc2626',
+          markerSize: 5
+        });
+      } else if (obsFinite.length) {
+        seriesList.push({
+          label: '实测',
+          values: obsValues,
+          xTimeline: opts.timeline,
+          xValues: useSimIndexAxis ? buildSequentialXValues(Array.isArray(opts.timeline) ? opts.timeline.length : obsValues.length) : null,
+          xMode: useSimIndexAxis ? 'index' : 'time',
+          color: '#dc2626',
+          mode: 'markers',
+          markerColor: '#dc2626',
+          markerSize: 5
+        });
       }
-      queuePlotlyChart(chartId, seriesList, opts.timeline, yUnit);
+      queuePlotlyChart(chartId, seriesList, opts.timeline, yUnit, {
+        mode: useSimIndexAxis ? 'sim-index' : 'timeline'
+      });
       return [
         '<div class="detail-chart-card"' + cardKeyAttr + '>',
           '<div class="detail-chart-head"><p class="detail-chart-title">' + title + (subtitle ? '（' + subtitle + '）' : '') + '</p>' + (headerMeta ? ('<span class="detail-chart-title-meta">' + headerMeta + '</span>') : '') + '</div>',
@@ -3784,6 +4280,18 @@
       return [];
     }
 
+    function getRawObsSeriesForName(name) {
+      const keyCanon = canonicalName(normalizeHeader(name));
+      if (keyCanon.indexOf('inflow') === 0 || keyCanon.indexOf('leakage') === 0 || keyCanon.indexOf('d') === 0) {
+        return { values: [], timeline: [] };
+      }
+      return getRawSeriesWithTimeline(currentObsMap, currentObsCanonical, name);
+    }
+
+    function getRawStageObsSeriesForName(name) {
+      return getRawSeriesWithTimeline(currentStageObsMap, currentStageObsCanonical, name);
+    }
+
     function loadGateRows(csvText) {
       const rows = parseCsv(csvText);
       if (rows.length < 2) return [];
@@ -3837,23 +4345,75 @@
       return { timeline, byName, seriesHeaders };
     }
 
-    function alignSeriesByTimeline(baseTimeline, sourceTimeline, sourceValues) {
+    function alignSeriesByTimeline(baseTimeline, sourceTimeline, sourceValues, options) {
       const base = Array.isArray(baseTimeline) ? baseTimeline : [];
       const srcTimeline = Array.isArray(sourceTimeline) ? sourceTimeline : [];
       const srcValues = Array.isArray(sourceValues) ? sourceValues : [];
+      const settings = options || {};
       if (!base.length) return [];
       const timeToValue = new Map();
       const n = Math.min(srcTimeline.length, srcValues.length);
+      const srcPoints = [];
+
+      function parseTimeKeyToMillis(value) {
+        const key = normalizeTimeKey(value);
+        if (!key) return NaN;
+        const m = key.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
+        if (!m) return NaN;
+        return new Date(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4]),
+          Number(m[5]),
+          0,
+          0
+        ).getTime();
+      }
+
       for (let i = 0; i < n; i += 1) {
         const tm = normalizeTimeKey(srcTimeline[i]);
         if (!tm) continue;
         const v = srcValues[i];
         if (!Number.isFinite(v)) continue;
         if (!timeToValue.has(tm)) timeToValue.set(tm, v);
+        const ms = parseTimeKeyToMillis(tm);
+        if (Number.isFinite(ms)) srcPoints.push({ ms, value: v });
       }
-      return base.map((tm) => {
+
+      const aligned = base.map((tm) => {
         const key = normalizeTimeKey(tm);
         return timeToValue.has(key) ? timeToValue.get(key) : NaN;
+      });
+
+      if (settings.sourceFormat !== 'td') return aligned;
+      if (aligned.some((value) => Number.isFinite(value))) return aligned;
+      if (!srcPoints.length) return aligned;
+
+      srcPoints.sort((a, b) => a.ms - b.ms);
+      return base.map((tm) => {
+        const baseMs = parseTimeKeyToMillis(tm);
+        if (!Number.isFinite(baseMs)) return NaN;
+
+        let fallback = null;
+        for (let i = 0; i < srcPoints.length; i += 1) {
+          const point = srcPoints[i];
+          if (point.ms > baseMs) break;
+          fallback = point.value;
+        }
+        if (Number.isFinite(fallback)) return fallback;
+
+        let nearestValue = NaN;
+        let nearestDistance = Infinity;
+        for (let i = 0; i < srcPoints.length; i += 1) {
+          const point = srcPoints[i];
+          const distance = Math.abs(point.ms - baseMs);
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestValue = point.value;
+          }
+        }
+        return nearestValue;
       });
     }
 
@@ -3927,7 +4487,9 @@
         if (!obsName) return;
         const values = obsMap.byName.get(obsName);
         if (!values || !values.length) return;
-        const alignedValues = alignSeriesByTimeline(baseTimeline, obsMap.timeline, values);
+        const alignedValues = alignSeriesByTimeline(baseTimeline, obsMap.timeline, values, {
+          sourceFormat: obsMap.format
+        });
         aligned.set(flowName, alignedValues);
       });
       return aligned;
@@ -4103,6 +4665,7 @@
             timeline: sourceDownTimeline,
             yUnit: 'm',
             obsValues: sourceObsValues,
+            rawObsSeries: getRawStageObsSeriesForName(segmentSource),
             showTimelineInfo: false,
             headerMeta: sourceMeta
           }));
@@ -4120,6 +4683,7 @@
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: targetObsValues,
+            rawObsSeries: getRawStageObsSeriesForName(segmentTarget),
             showTimelineInfo: false,
             headerMeta: targetMeta
           }));
@@ -4137,6 +4701,7 @@
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: sourceStageObsValues,
+            rawObsSeries: getRawStageObsSeriesForName(gateName),
             showTimelineInfo: false,
             headerMeta: sourceMeta
           }));
@@ -4154,6 +4719,7 @@
             timeline: currentStageMap.timeline,
             yUnit: 'm',
             obsValues: stageObsValues,
+            rawObsSeries: getRawStageObsSeriesForName(targetName),
             showTimelineInfo: false,
             headerMeta: headerMeta
           }));
@@ -4197,6 +4763,7 @@
         if (!values.length && !isInGatesIni) return;
 
         const obsValues = getObsSeriesForName(name);
+        const rawObsSeries = getRawObsSeriesForName(name);
         const lastValue = getLastFiniteValue(values);
         const obsLastValue = getLastFiniteValue(obsValues);
         const role = inflowNodes.has(name)
@@ -4207,8 +4774,10 @@
           (obsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
         relatedFlowCards.push(buildChartCardHtml('关联闸门流量', values, name + tag, {
           timeline: currentFlowMap.timeline,
+          xAxisMode: 'sim-index',
           yUnit: 'm^3/s',
           obsValues: obsValues,
+          rawObsSeries: rawObsSeries,
           showTimelineInfo: false,
           headerMeta: headerMeta
         }));
@@ -4231,14 +4800,17 @@
       const currentGateSimValues = getSimFlowSeriesForName(gateName);
       if (currentGateValues.length) {
         const currentObsValues = getObsSeriesForName(gateName);
+        const currentRawObsSeries = getRawObsSeriesForName(gateName);
         const lastValue = getLastFiniteValue(currentGateValues);
         const obsLastValue = getLastFiniteValue(currentObsValues);
         const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
           (currentObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
         flowCards.push(buildChartCardHtml('当前闸门流量', currentGateValues, gateName, {
           timeline: currentFlowMap.timeline,
+          xAxisMode: 'sim-index',
           yUnit: 'm^3/s',
           obsValues: currentObsValues,
+          rawObsSeries: currentRawObsSeries,
           showTimelineInfo: false,
           headerMeta: headerMeta,
           cardKey: gateName
@@ -4338,7 +4910,7 @@
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
         fetchConfiguredText(stageObsPathEl, { required: false }),
         fetchConfiguredText(flowPathEl, { required: true }),
-        fetchConfiguredText(obsPathEl, { required: false }),
+        fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] }),
         fetchConfiguredText(edgesPathEl, { required: true }),
         fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
       ]);
@@ -4365,12 +4937,11 @@
       const stageObsMap = stageObsResolved && stageObsResolved.text
         ? loadSeriesByResolvedPath(stageObsResolved)
         : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
-      const flowMap = loadSeriesByResolvedPath(flowResolved);
+      const flowSource = await resolveGateFlowSource(flowResolved, obsResolved);
+      const flowMap = flowSource.flowMap;
       const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
       const internalFlowMap = internalFlowCsv ? loadSeriesMap(internalFlowCsv) : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
-      const obsMap = obsResolved && obsResolved.text
-        ? loadSeriesByResolvedPath(obsResolved)
-        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
+      const obsMap = flowSource.obsMap;
       const edges = loadEdges(edgesCsv);
       const edgeNodeCanonicalSet = buildEdgeNodeCanonicalSet(edges);
       const iniMissingEdgeNameSet = buildIniMissingEdgeGateNameSet(gates, currentGatesIniNameSet, edgeNodeCanonicalSet);
@@ -4404,6 +4975,10 @@
       setGatePaneMeta(flowMap.timeline);
       currentObsMap = obsMap;
       rebuildObsCanonical();
+      if (flowSource.autoSwitched) {
+        flowPathEl.value = flowSource.flowResolved.path;
+        setFieldMessage(flowPathEl, '已自动切换到与实测时段重叠的流量文件');
+      }
       currentEdges = edges;
       currentGateTypeByName = buildGateTypeMapFromEdges(edges);
       const matchedGates = renderGates(gates, stageMap, iniMissingEdgeNameSet);

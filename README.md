@@ -81,6 +81,12 @@ Optional host and port:
 python gate_curve_map/gate_curve_map_server.py --host 127.0.0.1 --port 8610
 ```
 
+If your terminal or IDE does not support clicking URLs directly, start with:
+
+```powershell
+python gate_curve_map/gate_curve_map_server.py --open
+```
+
 ### Start the topology editor
 
 From the repository root:
@@ -156,4 +162,3 @@ This is useful when testing cases with incomplete datasets.
 
 - Gate curve map: `http://127.0.0.1:8610/gate_curve_map/gate_curve_map.html`
 - Topology editor: `http://127.0.0.1:8510/`
-

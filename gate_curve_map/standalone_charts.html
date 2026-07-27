@@ -352,18 +352,123 @@
         .replace(/[（）()\-_,.]/g, "");
     }
 
+    function parseTimelineInstant(value) {
+      var text = String(value || "").trim();
+      if (!text) return NaN;
+      var normalized = text.replace(/\//g, "-");
+      var ts = Date.parse(normalized);
+      if (Number.isFinite(ts)) return ts;
+      ts = Date.parse(normalized.replace(" ", "T"));
+      return Number.isFinite(ts) ? ts : NaN;
+    }
+
+    function formatTimeLabel(raw) {
+      var text = String(raw || "").trim();
+      if (!text) return "-";
+      if (text.indexOf(" ") > -1) {
+        var parts = text.split(" ");
+        var date = parts[0] || "";
+        var hhmm = String(parts[1] || "").slice(0, 5);
+        if (hhmm) return date.slice(5) + " " + hhmm;
+      }
+      return text.length > 12 ? text.slice(0, 12) : text;
+    }
+
+    function buildIndexTimelineAxisConfig(timeline) {
+      var labels = Array.isArray(timeline) ? timeline : [];
+      var count = labels.length;
+      if (!count) return { type: "linear", title: "模拟时间步序号" };
+      var maxVisibleTicks = 8;
+      var tickvals = [];
+      var stride = count <= maxVisibleTicks ? 1 : Math.max(1, Math.ceil((count - 1) / (maxVisibleTicks - 1)));
+      for (var i = 0; i < count; i += stride) tickvals.push(i + 1);
+      if (tickvals[tickvals.length - 1] !== count) tickvals.push(count);
+      return {
+        type: "linear",
+        title: "模拟时间步序号",
+        range: [1, count],
+        tickmode: "array",
+        tickvals: tickvals,
+        ticktext: tickvals.map(String)
+      };
+    }
+
+    function buildTimelineAxisConfig(timeline) {
+      var labels = Array.isArray(timeline) ? timeline : [];
+      var fullTickVals = [];
+      var fullTickText = [];
+      for (var i = 0; i < labels.length; i += 1) {
+        var raw = String(labels[i] || "");
+        var ts = parseTimelineInstant(raw);
+        if (!Number.isFinite(ts)) continue;
+        fullTickVals.push(ts);
+        fullTickText.push(formatTimeLabel(raw));
+      }
+      if (!fullTickVals.length) return { type: "linear", title: "时间步序号" };
+      var first = fullTickVals[0];
+      var last = fullTickVals[fullTickVals.length - 1];
+      var dtick = null;
+      for (var j = 1; j < fullTickVals.length; j += 1) {
+        var step = fullTickVals[j] - fullTickVals[j - 1];
+        if (Number.isFinite(step) && step > 0) { dtick = step; break; }
+      }
+      var maxVisibleTicks = 8;
+      var tickvals = [];
+      var ticktext = [];
+      if (fullTickVals.length <= maxVisibleTicks) {
+        tickvals = fullTickVals.slice();
+        ticktext = fullTickText.slice();
+      } else {
+        var stride = Math.max(1, Math.ceil((fullTickVals.length - 1) / (maxVisibleTicks - 1)));
+        for (var k = 0; k < fullTickVals.length; k += stride) {
+          tickvals.push(fullTickVals[k]);
+          ticktext.push(fullTickText[k]);
+        }
+        var lastIdx = fullTickVals.length - 1;
+        if (tickvals[tickvals.length - 1] !== fullTickVals[lastIdx]) {
+          tickvals.push(fullTickVals[lastIdx]);
+          ticktext.push(fullTickText[lastIdx]);
+        }
+      }
+      return {
+        type: "linear",
+        title: "时间",
+        range: [first, last],
+        tickmode: "array",
+        tickvals: tickvals,
+        ticktext: ticktext,
+        dtick: dtick
+      };
+    }
+
+    function buildSeriesHoverTemplate(axisMode) {
+      return axisMode === "sim-index"
+        ? "模拟步序=%{x:.3f}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>"
+        : "横轴=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>";
+    }
+
     function buildPlotPoints(series, timeline) {
       var y = [];
       var x = [];
       var t = [];
-      var values = Array.isArray(series) ? series : [];
+      var cfg = Array.isArray(series) ? { values: series } : (series || {});
+      var values = Array.isArray(cfg.values) ? cfg.values : [];
       var labels = Array.isArray(timeline) ? timeline : [];
+      var xTimeline = Array.isArray(cfg.xTimeline) ? cfg.xTimeline : labels;
+      var explicitXValues = Array.isArray(cfg.xValues) ? cfg.xValues : null;
+      var xMode = String(cfg.xMode || "").trim().toLowerCase();
+      var useTimelineX = xMode === "time" || (xMode !== "index" && Array.isArray(cfg.xTimeline) && cfg.xTimeline.length);
       for (var i = 0; i < values.length; i += 1) {
         var v = values[i];
         if (!Number.isFinite(v)) continue;
+        var label = String(xTimeline[i] || labels[i] || "");
+        var ts = parseTimelineInstant(label);
+        var explicitX = explicitXValues ? Number(explicitXValues[i]) : NaN;
+        var xValue = Number.isFinite(explicitX) ? explicitX : (useTimelineX && Number.isFinite(ts) ? ts : (i + 1));
+        if (!Number.isFinite(xValue)) continue;
         y.push(v);
-        x.push(i + 1);
-        t.push(String(labels[i] || ""));
+        x.push(xValue);
+        t.push(label);
       }
       return { x: x, y: y, t: t };
     }
@@ -533,6 +638,8 @@
 
     function buildPlotLayout(spec, settings) {
       var fontSize = settings.fontSize;
+      var axisMode = String((spec && spec.xAxisMode) || "").trim().toLowerCase();
+      var axisConfig = axisMode === "sim-index" ? buildIndexTimelineAxisConfig(spec && spec.timeline) : buildTimelineAxisConfig(spec && spec.timeline);
       return {
         margin: { l: 44, r: 12, t: 4, b: 28 },
         paper_bgcolor: "rgba(0,0,0,0)",
@@ -545,7 +652,13 @@
           font: { size: Math.max(9, fontSize) }
         },
         xaxis: {
-          title: { text: "时间步序号", standoff: 2, font: { size: fontSize } },
+          type: axisConfig.type,
+          range: axisConfig.range,
+          tickmode: axisConfig.tickmode,
+          tickvals: axisConfig.tickvals,
+          ticktext: axisConfig.ticktext,
+          dtick: axisConfig.dtick,
+          title: { text: axisConfig.title, standoff: 2, font: { size: fontSize } },
           tickfont: { size: fontSize, color: "#64748b" },
           showgrid: true,
           gridcolor: "rgba(148,163,184,0.18)",
@@ -633,9 +746,11 @@
         if (!host) return;
 
         var traces = [];
+        var axisMode = String((spec && spec.xAxisMode) || "").trim().toLowerCase();
+        var hoverTemplate = buildSeriesHoverTemplate(axisMode);
         var seriesList = Array.isArray(spec && spec.seriesList) ? spec.seriesList : [];
         seriesList.forEach(function(series) {
-          var points = buildPlotPoints(series && series.values, spec && spec.timeline);
+          var points = buildPlotPoints(series, spec && spec.timeline);
           if (!points.y.length) return;
           traces.push({
             x: points.x,
