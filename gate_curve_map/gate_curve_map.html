@@ -870,6 +870,10 @@
     const obsPathEl = document.getElementById('obsPath');
     const edgesPathEl = document.getElementById('edgesPath');
     const rootPathEl = document.getElementById('rootPath');
+    const requestedCase = new URLSearchParams(window.location.search).get('data');
+    if (requestedCase && /^[\w.-]+$/.test(requestedCase)) {
+      rootPathEl.value = '../data/' + requestedCase;
+    }
     const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');

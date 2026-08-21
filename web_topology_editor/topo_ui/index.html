@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>GraphGPU &middot; WebGPU-accelerated graph visualization</title>
+  
+  <link rel="apple-touch-icon" sizes="57x57" href="/assets/apple-icon-57x57-DjGhIxnB.png">
+  <link rel="apple-touch-icon" sizes="60x60" href="/assets/apple-icon-60x60-BAf1dVuI.png">
+  <link rel="apple-touch-icon" sizes="72x72" href="/assets/apple-icon-72x72-DwSU4pIP.png">
+  <link rel="apple-touch-icon" sizes="76x76" href="/assets/apple-icon-76x76-fYW3kScK.png">
+  <link rel="apple-touch-icon" sizes="114x114" href="/assets/apple-icon-114x114-C-gJ7Low.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="/assets/apple-icon-120x120-Bw3cvkcc.png">
+  <link rel="apple-touch-icon" sizes="144x144" href="/assets/apple-icon-144x144-CWljoMSB.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="/assets/apple-icon-152x152-9UZq1qZM.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-icon-180x180-3mo4A-uA.png">
+  <link rel="icon" type="image/png" sizes="192x192"  href="/assets/android-icon-192x192-DIrtkz5u.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32-CJoyhJOa.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96x96-4cGM4Z_z.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16-CPynmN3c.png">
+
+  <meta name="description" content="A WebGPU-accelerated, force-directed graph visualization library">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https:/graphgpu.com">
+  <meta property="og:title" content="GraphGPU">
+  <meta property="og:description" content="A WebGPU-accelerated, force-directed graph visualization library">
+  <meta property="og:image" content="https://graphgpu.com/preview.jpg">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="GraphGPU">
+  <meta name="twitter:description" content="A WebGPU-accelerated, force-directed graph visualization library">
+  <meta name="twitter:image" content="https://graphgpu.com/preview.jpg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/phosphor-icons"></script>
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-7G4LWPPM6P"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-7G4LWPPM6P');
+  </script>
+  <script type="module" crossorigin src="/assets/index-DfKgsFba.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
+</head>
+<body>
+  <div id="app">
+    <!-- TOOLBAR -->
+    <div class="toolbar" :class="{ light: !darkMode }">
+      <div class="brand"><span class="dot"></span> GraphGPU</div>
+      <div class="sep"></div>
+      <button class="btn" :class="{ active: layoutRunning }" @click="toggleLayout">
+        <i :class="layoutRunning ? 'ph-pause-bold' : 'ph-play-bold'"></i>
+        {{ layoutRunning ? 'pause' : 'layout' }}
+      </button>
+      <button class="btn" @click="fitView"><i class="ph-arrows-out-bold"></i> fit</button>
+      <button class="btn" @click="resetGraph"><i class="ph-arrow-counter-clockwise-bold"></i> reset</button>
+      <div class="sep"></div>
+      <button class="btn" :class="{ active: animatedEnabled }" @click="toggleAnimated">
+        <i class="ph-atom-bold"></i> animated
+      </button>
+      <div class="sep"></div>
+      <button class="btn" @click="toggleDarkMode">
+        <i :class="darkMode ? 'ph-sun-bold' : 'ph-moon-bold'"></i>
+        {{ darkMode ? 'light' : 'dark' }}
+      </button>
+      <div class="spacer"></div>
+      <button class="btn" @click="settingsModal.open = true">
+        <i class="ph-sliders-horizontal-bold"></i> settings
+      </button>
+    </div>
+
+    <!-- CANVAS CONTAINER (label overlay attaches here) -->
+    <div class="canvas-container" :class="{ light: !darkMode }">
+      <canvas id="graph-canvas"></canvas>
+    </div>
+
+    <!-- CONTEXT PANEL -->
+    <div class="context-panel" :class="{ hidden: !hasSelection }">
+      <div class="ctx-btn green" title="Edit node" @click="showEditModal"><i class="ph-pencil-fill"></i></div>
+      <div class="ctx-btn" title="Fit to view" @click="fitView"><i class="ph-arrows-out-fill"></i></div>
+      <div class="ctx-sep"></div>
+      <div class="ctx-btn red" title="Delete node" @click="deleteSelected"><i class="ph-trash-fill"></i></div>
+    </div>
+
+    <!-- PALETTE BAR -->
+    <div class="palette-bar">
+      <div v-for="name in paletteNames" :key="name"
+           class="palette-swatch"
+           :class="{ active: activePalette === name }"
+           :title="name"
+           :style="{ background: getPalettePreview(name) }"
+           @click="switchPalette(name)">
+      </div>
+    </div>
+
+    <!-- LEGEND -->
+    <div class="legend" :class="{ light: !darkMode }">
+      <div class="legend-item" v-for="item in legendItems" :key="item.tag">
+        <div class="legend-dot" :style="{ background: item.color }"></div>
+        {{ item.tag }}
+      </div>
+    </div>
+
+    <!-- STATUS BAR -->
+    <div class="statusbar" :class="{ light: !darkMode }">
+      <template v-if="selectedNode">
+        <span class="tag" :style="{ background: selectedNodeColor }">{{ selectedNode.tag }}</span>
+        <div class="props">
+          <div class="prop" v-for="(val, key) in selectedNode.properties" :key="key">
+            <b>{{ key }}:</b> <span>{{ val }}</span>
+          </div>
+        </div>
+      </template>
+      <template v-else-if="hoveredNode">
+        <span class="tag" :style="{ background: hoveredNodeColor }">{{ hoveredNode.tag }}</span>
+        <div class="props">
+          <div class="prop" v-for="(val, key) in hoveredNode.properties" :key="key">
+            <b>{{ key }}:</b> <span>{{ val }}</span>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <span class="idle-text">{{ nodeCount }} node{{ nodeCount !== 1 ? 's' : '' }} · {{ edgeCount }} edge{{ edgeCount !== 1 ? 's' : '' }}</span>
+      </template>
+      <div class="spacer"></div>
+      <a href="https://github.com/drkameleon/GraphGPU" 
+        target="_blank" 
+        rel="noopener" 
+        class="badge github-badge">
+        <i class="ph-github-logo"></i>
+        <span>Source Code</span>
+      </a>
+    </div>
+
+    <!-- TOOLTIP -->
+    <div class="tooltip" :class="{ visible: tooltipVisible }" :style="tooltipStyle">
+      <div class="tt-tag" :style="{ color: tooltipColor }">{{ tooltipTag }}</div>
+      <div class="tt-name">{{ tooltipName }}</div>
+      <div class="tt-props" v-if="tooltipProps">{{ tooltipProps }}</div>
+    </div>
+
+    <!-- EDIT MODAL -->
+    <div class="modal-overlay" v-if="editModal.open" @click.self="editModal.open = false">
+      <div class="modal-card" :class="{ light: !darkMode }">
+        <div class="modal-head">
+          <span>Edit Node</span>
+          <button class="close" @click="editModal.open = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="field-row" v-for="(val, key) in editModal.properties" :key="key">
+            <label>{{ key }}</label>
+            <input v-model="editModal.properties[key]" />
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-cancel" @click="editModal.open = false">Cancel</button>
+          <button class="btn-save" @click="saveEdit">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DELETE CONFIRM -->
+    <div class="modal-overlay" v-if="deleteModal.open" @click.self="deleteModal.open = false">
+      <div class="modal-card" :class="{ light: !darkMode }">
+        <div class="modal-head">
+          <span>Delete Node</span>
+          <button class="close" @click="deleteModal.open = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="confirm-text">
+            Delete <b>{{ deleteModal.label }}</b>?
+            This will also remove all connected edges.
+          </p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-cancel" @click="deleteModal.open = false">Cancel</button>
+          <button class="btn-danger" @click="confirmDelete">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal-overlay" v-if="settingsModal.open" @click.self="settingsModal.open = false">
+      <div class="modal-card settings-card" :class="{ light: !darkMode }">
+        <div class="modal-head">
+          <span><i class="ph-sliders-horizontal-bold"></i> Settings</span>
+          <button class="close" @click="settingsModal.open = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-section">
+            <div class="settings-section-title">Appearance</div>
+
+            <div class="setting-row">
+              <label>Node size</label>
+              <div class="slider-group">
+                <input type="range" min="2" max="20" step="0.5"
+                       :value="settingsModal.nodeSize"
+                       @input="onSettingChange('nodeSize', $event)" />
+                <span class="slider-val">{{ settingsModal.nodeSize }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Edge opacity</label>
+              <div class="slider-group">
+                <input type="range" min="0.01" max="1" step="0.01"
+                       :value="settingsModal.edgeOpacity"
+                       @input="onSettingChange('edgeOpacity', $event)" />
+                <span class="slider-val">{{ settingsModal.edgeOpacity }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Show labels</label>
+              <div class="toggle-group">
+                <button class="toggle-btn" :class="{ active: settingsModal.showLabels }"
+                        @click="onToggleSetting('showLabels')">
+                  {{ settingsModal.showLabels ? 'On' : 'Off' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Physics</div>
+
+            <div class="setting-row">
+              <label>Repulsion</label>
+              <div class="slider-group">
+                <input type="range" min="-2" max="0" step="0.01"
+                       :value="settingsModal.gravitationalConstant"
+                       @input="onSettingChange('gravitationalConstant', $event)" />
+                <span class="slider-val">{{ settingsModal.gravitationalConstant }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Spring length</label>
+              <div class="slider-group">
+                <input type="range" min="0.05" max="1" step="0.01"
+                       :value="settingsModal.springLength"
+                       @input="onSettingChange('springLength', $event)" />
+                <span class="slider-val">{{ settingsModal.springLength }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Spring stiffness</label>
+              <div class="slider-group">
+                <input type="range" min="0.01" max="0.3" step="0.005"
+                       :value="settingsModal.springConstant"
+                       @input="onSettingChange('springConstant', $event)" />
+                <span class="slider-val">{{ settingsModal.springConstant }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Central gravity</label>
+              <div class="slider-group">
+                <input type="range" min="0" max="0.1" step="0.001"
+                       :value="settingsModal.centralGravity"
+                       @input="onSettingChange('centralGravity', $event)" />
+                <span class="slider-val">{{ settingsModal.centralGravity }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Damping</label>
+              <div class="slider-group">
+                <input type="range" min="0.01" max="0.5" step="0.01"
+                       :value="settingsModal.damping"
+                       @input="onSettingChange('damping', $event)" />
+                <span class="slider-val">{{ settingsModal.damping }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Barnes-Hut θ</label>
+              <div class="slider-group">
+                <input type="range" min="0" max="1.5" step="0.05"
+                       :value="settingsModal.barnesHutTheta"
+                       @input="onSettingChange('barnesHutTheta', $event)" />
+                <span class="slider-val">{{ settingsModal.barnesHutTheta }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-cancel" @click="resetSettings">Reset defaults</button>
+          <button class="btn-save" @click="settingsModal.open = false">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fallback" id="fallback">
+    <h2>WebGPU Not Available</h2>
+    <p>This demo requires WebGPU. Try <strong>Chrome 113+</strong>, <strong>Edge 113+</strong>, or <strong>Safari 18+</strong>.</p>
+  </div>
+
+</body>
+</html>

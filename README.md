@@ -155,5 +155,16 @@ This is useful when testing cases with incomplete datasets.
 ## Current default local URLs
 
 - Gate curve map: `http://127.0.0.1:8610/gate_curve_map/gate_curve_map.html`
-- Topology editor: `http://127.0.0.1:8510/`
+- OCIS home: `http://127.0.0.1:8510/`
+- GraphGPU topology: `http://127.0.0.1:8510/topo`
+- Classic topology editor: `http://127.0.0.1:8510/classic`
+
+## Open-source software
+
+The new topology interface introduces [GraphGPU](https://github.com/drkameleon/GraphGPU),
+an open-source, WebGPU-accelerated graph visualization library. OCIS-GUI uses its
+rendering and force-directed layout capabilities for the new topology view.
+
+GraphGPU is distributed under the MIT License. Its bundled production assets and a
+copy of the license are located under `web_topology_editor/topo_ui/`.
 

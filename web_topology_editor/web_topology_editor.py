@@ -8,6 +8,7 @@ import heapq
 import html
 import json
 import math
+import mimetypes
 import os
 import re
 import shutil
@@ -20,6 +21,57 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlparse
 from urllib.request import urlopen
+
+
+TOPO_UI_DIR = Path(__file__).resolve().parent / "topo_ui"
+
+HOME_PAGE = r"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OCIS 可视化工作台</title>
+  <style>
+    :root{font-family:Inter,"Microsoft YaHei",sans-serif;color:#172033;background:#f4f7fb}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px}
+    main{width:min(920px,100%)}.eyebrow{color:#1677ff;font-weight:700;letter-spacing:.12em}
+    h1{font-size:clamp(32px,5vw,54px);margin:10px 0 12px}.lead{color:#64748b;font-size:17px;margin:0 0 30px}
+    .panel{background:#fff;border:1px solid #e3e9f2;border-radius:24px;padding:26px;box-shadow:0 20px 60px #27456d18}
+    label{display:block;font-weight:700;margin-bottom:9px}select{width:100%;padding:13px 14px;border:1px solid #ccd6e5;border-radius:12px;background:#fff;font-size:16px}
+    .tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:22px}
+    .tool{display:block;text-decoration:none;color:inherit;border:1px solid #dfe6f0;border-radius:18px;padding:22px;transition:.18s;background:#fbfdff}
+    .tool:hover{transform:translateY(-2px);border-color:#73aaf5;box-shadow:0 12px 30px #2563eb18}.icon{font-size:28px}
+    h2{font-size:20px;margin:12px 0 7px}.tool p{color:#64748b;margin:0;line-height:1.55}.hint{margin:18px 2px 0;color:#94a3b8;font-size:13px}
+    @media(max-width:640px){.tools{grid-template-columns:1fr}.panel{padding:18px}}
+  </style>
+</head>
+<body><main>
+  <div class="eyebrow">OCIS GUI</div><h1>选择案例，开始查看</h1>
+  <p class="lead">从同一个入口打开闸门曲线地图或 WebGPU 拓扑界面。</p>
+  <section class="panel">
+    <label for="caseSelect">案例</label><select id="caseSelect"><option>正在加载…</option></select>
+    <div class="tools">
+      <a class="tool" id="mapLink" href="#"><div class="icon">◉</div><h2>闸门曲线地图</h2><p>查看闸门位置、渠道、水位与流量曲线。</p></a>
+      <a class="tool" id="topoLink" href="#"><div class="icon">⌘</div><h2>拓扑界面</h2><p>打开新的 GraphGPU 拓扑关系视图。</p></a>
+    </div>
+    <p class="hint" id="status">案例来自仓库 data 目录</p>
+  </section>
+</main><script>
+const select=document.getElementById('caseSelect'),statusEl=document.getElementById('status');
+function updateLinks(){
+  const name=select.value, encoded=encodeURIComponent(name);
+  document.getElementById('topoLink').href='/topo?data='+encoded;
+  const gateOrigin=location.protocol+'//'+location.hostname+':8610';
+  document.getElementById('mapLink').href=gateOrigin+'/gate_curve_map/gate_curve_map.html?data='+encoded;
+}
+fetch('/api/cases').then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))).then(data=>{
+  const cases=Array.isArray(data.cases)?data.cases:[]; select.innerHTML='';
+  for(const item of cases){const option=document.createElement('option');option.value=item.name;option.textContent=item.name;select.appendChild(option)}
+  if(!cases.length){select.innerHTML='<option value="">没有可用案例</option>';statusEl.textContent='data 目录下未发现包含 mesh/edges.csv 的案例';}
+  updateLinks();
+}).catch(error=>{select.innerHTML='<option value="ph">ph</option>';statusEl.textContent='案例列表加载失败：'+error.message;updateLinks()});
+select.addEventListener('change',updateLinks);
+</script></body></html>"""
 
 
 REQUIRED_EDGE_COLUMNS = [
@@ -8304,7 +8356,7 @@ def _resolve_workspace_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def _path_to_base_posix(path: Path, base_dir: Path) -> str:
-    return path.resolve().relative_to(base_dir.resolve()).as_posix()
+    return Path(os.path.relpath(path.resolve(), base_dir.resolve())).as_posix()
 
 
 def _resolve_in_allowed_roots(base_dir: Path, raw_path: str, allowed_roots: List[Path]) -> Path:
@@ -9202,10 +9254,39 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _file_response(self, path: Path, immutable: bool = False) -> None:
+        try:
+            body = path.read_bytes()
+        except OSError:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+            return
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if immutable:
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._html_response(PLAYGROUND_STYLE_HTML)
+            self._html_response(HOME_PAGE)
+            return
+
+        if parsed.path == "/topo":
+            self._file_response(TOPO_UI_DIR / "index.html")
+            return
+
+        if parsed.path.startswith("/assets/"):
+            asset_name = parsed.path.removeprefix("/assets/")
+            if not asset_name or Path(asset_name).name != asset_name:
+                self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+                return
+            self._file_response(TOPO_UI_DIR / "assets" / asset_name, immutable=True)
             return
 
         if parsed.path == "/api/health":
@@ -9670,7 +9751,7 @@ def run_server(host: str, port: int, edges_path: Optional[Path], startup_warning
         pass
 
     _Handler.base_dir = Path(__file__).resolve().parent
-    _Handler.cases_root = _Handler.base_dir
+    _Handler.cases_root = (_Handler.base_dir.parent / "data").resolve()
     _Handler.startup_warning = str(startup_warning or "")
     if edges_path is not None:
         _Handler.edges_path = edges_path.resolve()
