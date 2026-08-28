@@ -289,6 +289,15 @@
         <input id="gateSearchInput" type="text" placeholder="输入闸门名，自动匹配" autocomplete="off" />
         <div id="gateSearchSuggest" class="search-suggest"></div>
       </div>
+      <span id="gateFlowFilterWrap" style="display:none;">
+        <label for="gateFlowFilterSelect">闸门筛选</label>
+        <select id="gateFlowFilterSelect">
+          <option value="demand" selected>只显示有需求的闸门</option>
+          <option value="control">只显示节制闸(type=0或4)</option>
+          <option value="diversion">只显示分水闸(type=2)</option>
+          <option value="all">全部显示</option>
+        </select>
+      </span>
       <label for="legendShowSelect">图例</label>
       <select id="legendShowSelect">
         <option value="1">显示</option>
@@ -502,12 +511,50 @@
     }
 
     var currentSpecs = [];
+    var currentVisibleSpecs = [];
     var currentPayload = null;
     var currentSearchResults = [];
     var currentSearchActiveIndex = -1;
+    var currentGateFlowFilter = "demand";
 
     function getRefreshProviderName() {
       return String((currentPayload && currentPayload.refreshProvider) || "").trim();
+    }
+
+    function isGateFlowPayload() {
+      var provider = getRefreshProviderName();
+      if (provider === "gate-flow") return true;
+      var title = String((currentPayload && currentPayload.title) || "").trim();
+      return title.indexOf("闸门") >= 0 || title.indexOf("流量") >= 0;
+    }
+
+    function getDisplayedSpecs() {
+      var list = Array.isArray(currentSpecs) ? currentSpecs : [];
+      if (!isGateFlowPayload()) return list;
+
+      var mode = String(currentGateFlowFilter || "demand");
+      var filtered = list.filter(function(spec) {
+        if (mode === "all") return true;
+        var typeValue = Number(spec && spec.gateType);
+        if (mode === "control") {
+          if (!Number.isFinite(typeValue)) return false;
+          return typeValue === 0 || typeValue === 4;
+        }
+        if (mode === "diversion") {
+          if (!Number.isFinite(typeValue)) return false;
+          return typeValue === 2;
+        }
+        if (mode === "demand") return !!(spec && spec.hasDemand);
+        return true;
+      });
+      if (mode === "demand" && !filtered.length) return list;
+      return filtered;
+    }
+
+    function updateGateFlowFilterVisibility() {
+      var wrap = document.getElementById("gateFlowFilterWrap");
+      if (!wrap) return;
+      wrap.style.display = isGateFlowPayload() ? "" : "none";
     }
 
     function getOpenerRefreshFunction() {
@@ -525,6 +572,7 @@
     function applyPayload(payload) {
       currentPayload = payload || null;
       currentSpecs = payload && Array.isArray(payload.specs) ? payload.specs : [];
+      updateGateFlowFilterVisibility();
       document.title = String((payload && payload.title) || "图表汇总");
       document.getElementById("standaloneTitle").textContent = String((payload && payload.title) || "图表汇总");
       document.getElementById("standaloneSubtitle").textContent = String((payload && payload.subtitle) || "");
@@ -571,6 +619,7 @@
         }
         currentPayload = payload;
         currentSpecs = payload.specs;
+        updateGateFlowFilterVisibility();
         document.title = String(payload.title || "图表汇总");
         document.getElementById("standaloneTitle").textContent = String(payload.title || "图表汇总");
         document.getElementById("standaloneSubtitle").textContent = String(payload.subtitle || "");
@@ -704,7 +753,9 @@
 
     function renderSpecs(specs) {
       var chartListEl = document.getElementById("chartList");
-      var list = Array.isArray(specs) ? specs : [];
+      currentSpecs = Array.isArray(specs) ? specs : currentSpecs;
+      currentVisibleSpecs = getDisplayedSpecs();
+      var list = currentVisibleSpecs;
       if (!list.length) {
         chartListEl.innerHTML = '<div class="chart-empty">当前无图表可展示。</div>';
         return;
@@ -788,7 +839,7 @@
     function updatePlotAppearance() {
       if (!window.Plotly) return;
       var settings = getChartSettings();
-      currentSpecs.forEach(function(spec, index) {
+      currentVisibleSpecs.forEach(function(spec, index) {
         var host = document.getElementById("standalone-plot-" + index);
         if (!host) return;
         try {
@@ -891,7 +942,7 @@
         hideSearchSuggest();
         return;
       }
-      var results = buildGateSearchIndex(currentSpecs)
+      var results = buildGateSearchIndex(currentVisibleSpecs)
         .map(function(item) {
           return { item: item, score: scoreGateSearch(item, query) };
         })
@@ -918,7 +969,7 @@
     }
 
     async function exportChartsImage() {
-      if (!window.Plotly || !currentSpecs.length) return;
+      if (!window.Plotly || !currentVisibleSpecs.length) return;
       var button = document.getElementById("exportImageBtn");
       if (button) {
         button.disabled = true;
@@ -1052,6 +1103,17 @@
       }
       setChartColumns(defaultColumns);
 
+      var gateFlowFilterEl = document.getElementById("gateFlowFilterSelect");
+      if (gateFlowFilterEl) {
+        gateFlowFilterEl.value = String(currentGateFlowFilter || "demand");
+        gateFlowFilterEl.addEventListener("change", function() {
+          currentGateFlowFilter = gateFlowFilterEl.value;
+          hideSearchSuggest();
+          renderSpecs(currentSpecs);
+        });
+      }
+      updateGateFlowFilterVisibility();
+
       ["fontSizeInput", "legendShowSelect", "legendOrientationSelect", "legendXInput", "legendYInput"].forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
@@ -1066,7 +1128,7 @@
         searchInputEl.addEventListener("keydown", function(evt) {
           if (!currentSearchResults.length) {
             if (evt.key === "Enter") {
-              var exactMatch = buildGateSearchIndex(currentSpecs).find(function(item) {
+              var exactMatch = buildGateSearchIndex(currentVisibleSpecs).find(function(item) {
                 return normalizeSearchText(item.title) === normalizeSearchText(searchInputEl.value);
               });
               if (exactMatch) {

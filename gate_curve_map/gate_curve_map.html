@@ -755,20 +755,6 @@
         </div>
       </div>
       <div class="field">
-        <label for="flowPath">闸门流量 CSV(Q)</label>
-        <div class="field-inline">
-          <input id="flowPath" value="output/channel_Gates_Stastic.csv" />
-          <button type="button" id="flowPathLoadBtn" class="secondary">加载</button>
-        </div>
-      </div>
-      <div class="field">
-        <label for="obsPath">实测流量 CSV(默认 action_obs_td.csv)</label>
-        <div class="field-inline">
-          <input id="obsPath" value="input/action_obs_td.csv" />
-          <button type="button" id="obsPathLoadBtn" class="secondary">加载</button>
-        </div>
-      </div>
-      <div class="field">
         <label for="edgesPath">边关系 CSV</label>
         <div class="field-inline">
           <input id="edgesPath" value="mesh/edges.csv" />
@@ -778,6 +764,7 @@
       <div class="actions">
         <button id="reloadBtn">重新加载</button>
         <button id="fitBtn" class="secondary">缩放到全图</button>
+        <button id="openConfigBtn" class="secondary">打开 OCIS_dataConfig.json</button>
       </div>
       <div id="stats" class="stats">等待加载...</div>
     </aside>
@@ -941,6 +928,7 @@
     let currentObsAlignedByFlow = new Map();
     let currentObsCanonical = new Map();
     let currentGatesIniNameSet = new Set();
+    let currentGateDemandNameSet = new Set();
     let currentEdges = [];
     let currentGateTypeByName = new Map();
     let currentIniGatesMissingEdgeSet = new Set();
@@ -953,8 +941,6 @@
     const gatesPathEl = document.getElementById('gatesPath');
     const seriesPathEl = document.getElementById('seriesPath');
     const stageObsPathEl = document.getElementById('stageObsPath');
-    const flowPathEl = document.getElementById('flowPath');
-    const obsPathEl = document.getElementById('obsPath');
     const edgesPathEl = document.getElementById('edgesPath');
     const rootPathEl = document.getElementById('rootPath');
     const rootPathLoadBtnEl = document.getElementById('rootPathLoadBtn');
@@ -966,9 +952,8 @@
     const gatesPathLoadBtnEl = document.getElementById('gatesPathLoadBtn');
     const seriesPathLoadBtnEl = document.getElementById('seriesPathLoadBtn');
     const stageObsPathLoadBtnEl = document.getElementById('stageObsPathLoadBtn');
-    const flowPathLoadBtnEl = document.getElementById('flowPathLoadBtn');
-    const obsPathLoadBtnEl = document.getElementById('obsPathLoadBtn');
     const edgesPathLoadBtnEl = document.getElementById('edgesPathLoadBtn');
+    const openConfigBtnEl = document.getElementById('openConfigBtn');
     const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');
@@ -1053,8 +1038,6 @@
         gatesPathEl,
         seriesPathEl,
         stageObsPathEl,
-        flowPathEl,
-        obsPathEl,
         edgesPathEl
       ].forEach(clearFieldStatus);
     }
@@ -1288,41 +1271,6 @@
         ? loadSeriesByResolvedPath(stageObsResolved)
         : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
       rebuildStageObsCanonical();
-      rerenderCurrentSelection();
-      updateStatsSummary();
-    }
-
-    async function reloadFlowData() {
-      setLoadingMessage('正在加载闸门流量数据...');
-      const flowResolved = await fetchConfiguredText(flowPathEl, { required: true });
-      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] });
-      const flowSource = await resolveGateFlowSource(flowResolved, obsResolved);
-      currentFlowMap = flowSource.flowMap;
-      currentObsMap = flowSource.obsMap;
-      if (flowSource.autoSwitched) {
-        flowPathEl.value = flowSource.flowResolved.path;
-        setFieldMessage(flowPathEl, '已自动切换到与实测时段重叠的流量文件');
-      }
-      const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
-      currentInternalFlowMap = internalFlowCsv
-        ? loadSeriesMap(internalFlowCsv)
-        : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
-      rebuildFlowCanonical();
-      rebuildObsCanonical();
-      currentObsAlignedByFlow = buildObsAlignedMap(currentObsMap, currentFlowMap);
-      setGatePaneMeta(currentFlowMap.timeline);
-      renderDynamicWaterline(currentStageMap, currentEdges, currentGateRows, currentFlowMap, currentStakeMap);
-      rerenderCurrentSelection();
-      updateStatsSummary();
-    }
-
-    async function reloadObsData() {
-      setLoadingMessage('正在加载实测流量数据...');
-      const obsResolved = await fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] });
-      currentObsMap = obsResolved && obsResolved.text
-        ? loadSeriesByResolvedPath(obsResolved)
-        : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
-      rebuildObsCanonical();
       rerenderCurrentSelection();
       updateStatsSummary();
     }
@@ -2887,6 +2835,86 @@
       }
     }
 
+    function stripJsonComments(text) {
+      let result = '';
+      let inString = false;
+      let inLineComment = false;
+      let inBlockComment = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (inLineComment) {
+          if (ch === '\n' || ch === '\r') {
+            inLineComment = false;
+            result += ch;
+          }
+          continue;
+        }
+        if (inBlockComment) {
+          if (ch === '*' && next === '/') {
+            inBlockComment = false;
+            i += 1;
+          }
+          continue;
+        }
+        if (inString) {
+          result += ch;
+          if (ch === '\\') {
+            if (i + 1 < text.length) {
+              result += text[i + 1];
+              i += 1;
+            }
+          } else if (ch === '"') {
+            inString = false;
+          }
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+          result += ch;
+        } else if (ch === '/' && next === '/') {
+          inLineComment = true;
+          i += 1;
+        } else if (ch === '/' && next === '*') {
+          inBlockComment = true;
+          i += 1;
+        } else {
+          result += ch;
+        }
+      }
+      return result;
+    }
+
+    async function loadDataConfig() {
+      try {
+        const text = await fetchText(resolveDataPath('OCIS_dataConfig.json'));
+        const parsed = JSON.parse(stripJsonComments(text));
+        return (parsed && typeof parsed === 'object') ? parsed : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function normalizeConfigPath(value) {
+      return String(value || '').trim().replace(/\\+/g, '/').replace(/^\/+/, '');
+    }
+
+    async function fetchConfiguredPath(rawValue, options) {
+      const settings = options || {};
+      const required = settings.required !== false;
+      const value = String(rawValue || '').trim();
+      if (!value) {
+        if (required) throw new Error('未设置数据源路径');
+        return { path: '', text: '' };
+      }
+      try {
+        return await fetchTextFirstResolved(buildPathCandidates(value, settings.fallbacks));
+      } catch (error) {
+        if (required) throw error;
+        return { path: resolveDataPath(value), text: '' };
+      }
+    }
+
     function isTdFormatPath(path) {
       const text = String(path || '').trim().toLowerCase();
       if (!text) return false;
@@ -3463,6 +3491,8 @@
         const lastValue = getLastFiniteValue(values);
         const obsLastValue = getLastFiniteValue(obsValues);
         const inIni = currentGatesIniNameSet.has(canonicalName(name));
+        const gateTypeValue = getGateTypeForName(name);
+        const hasDemand = hasDemandForName(name);
         const headerMeta = (inIni ? 'Gates.ini' : '非Gates.ini') + ' | 末值=' +
           (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
           (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '') +
@@ -3504,6 +3534,8 @@
           xAxisMode: 'sim-index',
           yUnit: 'm^3/s',
           headerMeta: headerMeta,
+          gateType: Number.isFinite(gateTypeValue) ? gateTypeValue : null,
+          hasDemand: !!hasDemand,
           seriesList: seriesList,
           flowCompare: {
             enabled: flowCompare.hasCompareBars,
@@ -4503,9 +4535,9 @@
         const rawType = edge.edgeType;
         const edgeType = Number(rawType);
         if (!Number.isFinite(edgeType)) return;
-        const names = [edge.source, edge.target, edge.end]
+        const names = [edge.source, edge.target, edge.end, edge.level1, edge.level2]
           .map((value) => String(value || '').trim())
-          .filter((name) => isValidNodeName(name));
+          .filter((name) => name && name !== '-1');
         names.forEach((name) => {
           if (!gateTypeMap.has(name)) {
             gateTypeMap.set(name, edgeType);
@@ -4513,6 +4545,53 @@
         });
       });
       return gateTypeMap;
+    }
+
+    function buildGateDemandNameSetFromInputJson(text) {
+      const result = new Set();
+      const raw = String(text || '').trim();
+      if (!raw) return result;
+
+      let parsed = null;
+      try {
+        parsed = JSON.parse(stripJsonComments(raw));
+      } catch (_) {
+        return result;
+      }
+
+      const waterDemand = parsed && typeof parsed === 'object' ? parsed.waterDemand : null;
+      if (!waterDemand || typeof waterDemand !== 'object') return result;
+
+      Object.keys(waterDemand).forEach((name) => {
+        const canon = canonicalName(name);
+        if (!canon) return;
+        const intervals = Array.isArray(waterDemand[name]) ? waterDemand[name] : [];
+        const hasPositiveDemand = intervals.some((entry) => {
+          if (!entry || typeof entry !== 'object') return false;
+          const q = Number(entry.q);
+          return Number.isFinite(q) && q > 0;
+        });
+        if (hasPositiveDemand) result.add(canon);
+      });
+
+      return result;
+    }
+
+    function getGateTypeForName(name) {
+      const raw = String(name || '').trim();
+      if (!raw) return NaN;
+      const direct = currentGateTypeByName.get(raw);
+      if (Number.isFinite(Number(direct))) return Number(direct);
+
+      const canon = canonicalName(raw);
+      for (const [key, value] of currentGateTypeByName.entries()) {
+        if (canonicalName(key) === canon) return Number(value);
+      }
+      return NaN;
+    }
+
+    function hasDemandForName(name) {
+      return currentGateDemandNameSet.has(canonicalName(name));
     }
 
     function findFirstGateByType(gates, typeValue) {
@@ -4540,6 +4619,8 @@
       const canalIndex = headers.indexOf('canal');
       const idIndex = headers.indexOf('id');
       const gateBottomIndex = headers.indexOf('gate_bottom_elevation');
+      const level1Index = headers.indexOf('level1');
+      const level2Index = headers.indexOf('level2');
       return rows.slice(1).map((cells) => {
         const source = String(cells[sourceIndex] || '').trim();
         const target = String(cells[targetIndex] || '').trim();
@@ -4549,7 +4630,9 @@
         const id = String(cells[idIndex] || '').trim();
         const edgeType = Number(cells[edgeTypeIndex]);
         const gateBottomElevation = Number(cells[gateBottomIndex]);
-        return { source, target, end, connectionType, canal, id, edgeType, gateBottomElevation };
+        const level1 = String(cells[level1Index] || '').trim();
+        const level2 = String(cells[level2Index] || '').trim();
+        return { source, target, end, connectionType, canal, id, edgeType, gateBottomElevation, level1, level2 };
       }).filter((row) => row.source || row.target || row.end);
     }
 
@@ -4882,6 +4965,11 @@
     async function reload() {
       statsEl.textContent = '正在加载渠道与曲线数据...';
       clearAllFieldStatuses();
+      const dataConfig = await loadDataConfig();
+      const hdcm = (dataConfig && dataConfig.HDCM) || {};
+      const flowPathValue = normalizeConfigPath(hdcm.output_Q_path) || 'output/channel_Gates_Stastic_Q_action.csv';
+      const obsPathValue = normalizeConfigPath(hdcm.boundary_flow_path) || 'input/action_obs_td.csv';
+      const inputJsonPath = normalizeConfigPath(hdcm.input_json_path) || 'input/input.json';
       const stageH2Candidates = buildPathCandidates('output/channel_Gates_Stastic_h2.csv', [
         'output/stage_encode.csv',
         'output/stage/stage_encode.csv'
@@ -4897,7 +4985,8 @@
         flowResolved,
         obsResolved,
         edgesResolved,
-        stakeJson
+        stakeJson,
+        inputJsonText
       ] = await Promise.all([
         fetchConfiguredText(inputPathEl, { required: true }),
         fetchConfiguredText(neighborPathEl, { required: true }),
@@ -4909,10 +4998,18 @@
         }),
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
         fetchConfiguredText(stageObsPathEl, { required: false }),
-        fetchConfiguredText(flowPathEl, { required: true }),
-        fetchConfiguredText(obsPathEl, { required: false, fallbacks: ['input/action_obs_td.csv'] }),
+        fetchConfiguredPath(flowPathValue, {
+          required: true,
+          fallbacks: [
+            'output/action.csv',
+            'output/channel_Gates_Stastic.csv',
+            'output/channel_Gates_Stastic_Q_action.csv'
+          ]
+        }),
+        fetchConfiguredPath(obsPathValue, { required: false, fallbacks: ['input/action_obs_td.csv'] }),
         fetchConfiguredText(edgesPathEl, { required: true }),
-        fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}')
+        fetchText(resolveDataPath('mesh/stake.json')).catch(() => '{}'),
+        fetchText(resolveDataPath(inputJsonPath)).catch(() => '')
       ]);
       const inputTxt = inputResolved.text;
       const neighborTxt = neighborResolved.text;
@@ -4926,6 +5023,8 @@
           .map((item) => canonicalName(item && item.name))
           .filter(Boolean)
       );
+      const gateDemandNameSet = buildGateDemandNameSetFromInputJson(inputJsonText);
+      currentGateDemandNameSet = gateDemandNameSet.size ? gateDemandNameSet : new Set(currentGatesIniNameSet);
       const gateMeshMatched = isGateMeshOneToOne(gatesFromCsv, gatesFromIni);
       const displayGateInfo = buildDisplayGatesFromIni(gatesFromIni, gatesFromCsv, gatesIniItems);
       const gates = displayGateInfo.gates.length ? displayGateInfo.gates : (gatesFromIni.length ? gatesFromIni : gatesFromCsv);
@@ -4975,10 +5074,6 @@
       setGatePaneMeta(flowMap.timeline);
       currentObsMap = obsMap;
       rebuildObsCanonical();
-      if (flowSource.autoSwitched) {
-        flowPathEl.value = flowSource.flowResolved.path;
-        setFieldMessage(flowPathEl, '已自动切换到与实测时段重叠的流量文件');
-      }
       currentEdges = edges;
       currentGateTypeByName = buildGateTypeMapFromEdges(edges);
       const matchedGates = renderGates(gates, stageMap, iniMissingEdgeNameSet);
@@ -5179,20 +5274,11 @@
         });
       });
     }
-    if (flowPathLoadBtnEl) {
-      flowPathLoadBtnEl.addEventListener('click', () => {
-        reloadFlowData().catch((error) => {
-          console.error(error);
-          statsEl.textContent = String(error && error.message ? error.message : error);
-        });
-      });
-    }
-    if (obsPathLoadBtnEl) {
-      obsPathLoadBtnEl.addEventListener('click', () => {
-        reloadObsData().catch((error) => {
-          console.error(error);
-          statsEl.textContent = String(error && error.message ? error.message : error);
-        });
+    if (openConfigBtnEl) {
+      openConfigBtnEl.addEventListener('click', () => {
+        const path = resolveDataPath('OCIS_dataConfig.json');
+        const url = isLocalAbsoluteFsPath(path) ? buildFsApiUrl(path, 'read') : path;
+        window.open(url, '_blank');
       });
     }
     if (caseDirPathEl) {
