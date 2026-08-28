@@ -954,6 +954,10 @@
     const stageObsPathLoadBtnEl = document.getElementById('stageObsPathLoadBtn');
     const edgesPathLoadBtnEl = document.getElementById('edgesPathLoadBtn');
     const openConfigBtnEl = document.getElementById('openConfigBtn');
+    const requestedCase = new URLSearchParams(window.location.search).get('data');
+    if (requestedCase && /^[\w.-]+$/.test(requestedCase)) {
+      caseDirPathEl.value = requestedCase;
+    }
     const fieldStatusMap = new Map();
     const statsEl = document.getElementById('stats');
     const channelLegendEl = document.getElementById('channelLegend');
