@@ -34,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/phosphor-icons"></script>
+  <script src="https://unpkg.com/phosphor-icons"></script>
 
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-7G4LWPPM6P"></script>
@@ -45,7 +45,7 @@
 
     gtag('config', 'G-7G4LWPPM6P');
   </script>
-  <script type="module" crossorigin src="/assets/index-DfKgsFba.js"></script>
+  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=zoom-sens-1"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
 </head>
 <body>
@@ -223,6 +223,30 @@
                         @click="onToggleSetting('showLabels')">
                   {{ settingsModal.showLabels ? 'On' : 'Off' }}
                 </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Mouse</div>
+
+            <div class="setting-row">
+              <label>Wheel zoom</label>
+              <div class="slider-group">
+                <input type="range" min="0.1" max="2" step="0.05"
+                       :value="settingsModal.zoomSensitivity"
+                       @input="onSettingChange('zoomSensitivity', $event)" />
+                <span class="slider-val">{{ settingsModal.zoomSensitivity }}</span>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <label>Pan speed</label>
+              <div class="slider-group">
+                <input type="range" min="0.2" max="3" step="0.1"
+                       :value="settingsModal.panSensitivity"
+                       @input="onSettingChange('panSensitivity', $event)" />
+                <span class="slider-val">{{ settingsModal.panSensitivity }}</span>
               </div>
             </div>
           </div>

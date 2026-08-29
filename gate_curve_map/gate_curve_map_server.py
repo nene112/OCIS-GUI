@@ -32,30 +32,50 @@ class CachedTextFile(NamedTuple):
     payload: bytes
 
 
-def decode_text_bytes(payload: bytes) -> str:
-    try:
-        return payload.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        pass
+def resolve_fs_api_path(raw_path: str) -> Path:
+    text = str(raw_path or "").strip()
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    page_dir = Path(__file__).resolve().parent
+    candidates = [
+        (page_dir / text).resolve(),
+        (page_dir.parent / text).resolve(),
+        (Path.cwd() / text).resolve(),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
-    candidates: list[tuple[str, str]] = []
-    for encoding in ("utf-8", "gb18030", "gbk"):
+
+def decode_text_bytes(payload: bytes) -> str:
+    # Match local detectEncode(): try UTF-8 first, then GB18030/GBK strictly.
+    # Do not score UTF-8 with errors="replace" against GBK — that can pick garbled headers.
+    strict_ok: list[tuple[str, str]] = []
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
-            candidates.append((encoding, payload.decode(encoding, errors="replace")))
-        except LookupError:
+            strict_ok.append((encoding, payload.decode(encoding)))
+        except (UnicodeDecodeError, LookupError):
             continue
 
-    if not candidates:
-        return payload.decode("utf-8", errors="replace")
+    if strict_ok:
+        def score(item: tuple[str, str]) -> tuple[int, int]:
+            encoding, text = item
+            cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+            utf8_bonus = 1 if encoding.startswith("utf-8") else 0
+            if cjk:
+                return (cjk, utf8_bonus)
+            return (0, utf8_bonus)
 
-    def score(item: tuple[str, str]) -> tuple[int, int, int]:
-        encoding, text = item
-        bad = text.count("\ufffd")
-        cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-        utf8_bonus = 1 if encoding == "utf-8" else 0
-        return (-bad, cjk, utf8_bonus)
+        return max(strict_ok, key=score)[1]
 
-    return max(candidates, key=score)[1]
+    for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+        try:
+            return payload.decode(encoding, errors="replace")
+        except LookupError:
+            continue
+    return payload.decode("utf-8", errors="replace")
 
 
 class Utf8HTTPRequestHandler(SimpleHTTPRequestHandler):
@@ -135,7 +155,7 @@ class Utf8HTTPRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_fs_read_api(self, query: dict[str, list[str]], body: bool) -> bool:
         raw_path = query.get("path", [""])[0]
-        path = Path(raw_path)
+        path = resolve_fs_api_path(raw_path)
         if not raw_path:
             self._send_json({"error": "missing path"}, body=body, status=400)
             return True
@@ -174,7 +194,7 @@ class Utf8HTTPRequestHandler(SimpleHTTPRequestHandler):
         if not raw_path:
             self._send_json({"error": "missing path"}, body=body, status=400)
             return True
-        path = Path(raw_path)
+        path = resolve_fs_api_path(raw_path)
         if not path.exists() or not path.is_dir():
             self._send_json({"error": "directory not found", "path": raw_path}, body=body, status=404)
             return True

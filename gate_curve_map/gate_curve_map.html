@@ -705,7 +705,7 @@
       <div class="field">
         <label for="rootPath">数据根目录(data 路径)</label>
         <div class="field-inline">
-          <input id="rootPath" value="../data" />
+          <input id="rootPath" value="../../ocismilpnet-mac-win/data" />
           <button type="button" id="rootPathLoadBtn" class="secondary">加载</button>
         </div>
       </div>
@@ -713,7 +713,7 @@
         <label for="caseDirPath">案例目录</label>
         <div class="field-inline">
           <div class="field-search-wrap" style="flex:1 1 auto;">
-            <input id="caseDirPath" value="sj_zonggan-d0" autocomplete="off" />
+            <input id="caseDirPath" value="dayudu" autocomplete="off" />
             <div id="caseDirSuggest" class="field-suggest"></div>
           </div>
           <button type="button" id="caseDirLoadBtn" class="secondary">加载</button>
@@ -839,6 +839,11 @@
   <script src="https://cdn.jsdelivr.net/npm/ol@9.2.4/dist/ol.js"></script>
   <script src="../vendor/plotly-2.35.2.min.js"></script>
   <script>
+    if (!window.Plotly) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"><\\/script>');
+    }
+  </script>
+  <script>
     const projection = new ol.proj.Projection({
       code: 'LOCAL_GATE_MESH',
       units: 'm'
@@ -927,8 +932,11 @@
     let currentObsMap = { timeline: [], byName: new Map() };
     let currentObsAlignedByFlow = new Map();
     let currentObsCanonical = new Map();
+    let currentGateIdByName = new Map();
+    let currentFlowIdDisplayName = new Map();
     let currentGatesIniNameSet = new Set();
     let currentGateDemandNameSet = new Set();
+    let currentCalcHorizon = null;
     let currentEdges = [];
     let currentGateTypeByName = new Map();
     let currentIniGatesMissingEdgeSet = new Set();
@@ -1061,11 +1069,37 @@
         if (!values || !values.length) return;
         currentFlowCanonical.set(canonicalName(key), values);
       });
+      currentGateIdByName.forEach((id, nameCanon) => {
+        if (!nameCanon || currentFlowCanonical.has(nameCanon)) return;
+        const values = currentFlowMap.byName.get('d' + id) || currentFlowCanonical.get(canonicalName('d' + id));
+        if (values && values.length) currentFlowCanonical.set(nameCanon, values);
+      });
       currentInternalFlowCanonical = new Map();
       currentInternalFlowMap.byName.forEach((values, key) => {
         if (!values || !values.length) return;
         currentInternalFlowCanonical.set(canonicalName(key), values);
       });
+    }
+
+    function buildGateIdMaps(edges) {
+      const idByName = new Map();
+      const displayById = new Map();
+      (Array.isArray(edges) ? edges : []).forEach((edge) => {
+        const id = String(edge && edge.id || '').trim();
+        if (!id) return;
+        const names = [edge.source, edge.target, edge.end];
+        names.forEach((rawName, idx) => {
+          const name = String(rawName || '').trim();
+          const key = canonicalName(name);
+          if (!key || key === '-1') return;
+          if (/^(?:inflow|leakage|d)\d+$/i.test(key)) return;
+          if (idx > 0 && String(edge.connectionType || '').toLowerCase() !== 'indirect') return;
+          if (!idByName.has(key)) idByName.set(key, id);
+          if (!displayById.has(id) && idx === 0) displayById.set(id, name);
+        });
+      });
+      currentGateIdByName = idByName;
+      currentFlowIdDisplayName = displayById;
     }
 
     function rebuildObsCanonical() {
@@ -2757,7 +2791,13 @@
 
     function isLocalAbsoluteFsPath(path) {
       const v = String(path || '').trim();
-      return /^[a-zA-Z]:[\\/]/.test(v) || /^\\\\/.test(v);
+      return (
+        /^[a-zA-Z]:[\\/]/.test(v) ||
+        /^\\\\/.test(v) ||
+        (v.startsWith('/') && !v.startsWith('//')) ||
+        v.startsWith('./') ||
+        v.startsWith('../')
+      );
     }
 
     function buildFsApiUrl(pathValue, mode) {
@@ -2978,6 +3018,69 @@
       return { x, y, timeLabels };
     }
 
+    function isBarSeries(series) {
+      const type = String(series && series.type || '').trim().toLowerCase();
+      const mode = String(series && series.mode || '').trim().toLowerCase();
+      return type === 'bar' || mode === 'bar';
+    }
+
+    function inferBarWidth(xValues) {
+      const xs = [];
+      (Array.isArray(xValues) ? xValues : []).forEach((value) => {
+        const n = Number(value);
+        if (Number.isFinite(n)) xs.push(n);
+      });
+      xs.sort((a, b) => a - b);
+      let minDx = Infinity;
+      for (let i = 1; i < xs.length; i += 1) {
+        const d = xs[i] - xs[i - 1];
+        if (d > 0 && d < minDx) minDx = d;
+      }
+      if (!Number.isFinite(minDx) || !(minDx > 0)) return 0.72;
+      return minDx * 0.72;
+    }
+
+    function buildPlotlySeriesTrace(series, points, hoverTemplate) {
+      const customdata = points.timeLabels || points.t || [];
+      const name = String(series && series.label || '');
+      const color = String((series && series.color) || '#0f766e');
+      if (isBarSeries(series)) {
+        const barColor = String((series && (series.markerColor || series.color)) || '#dc2626');
+        return {
+          x: points.x,
+          y: points.y,
+          customdata,
+          type: 'bar',
+          name,
+          hovertemplate: hoverTemplate,
+          marker: {
+            color: 'rgba(220, 38, 38, 0.42)',
+            line: { color: barColor, width: 0.8 }
+          },
+          width: inferBarWidth(points.x),
+          opacity: 0.92
+        };
+      }
+      return {
+        x: points.x,
+        y: points.y,
+        customdata,
+        type: 'scatter',
+        mode: String((series && series.mode) || 'lines'),
+        name,
+        hovertemplate: hoverTemplate,
+        line: {
+          color,
+          width: 2,
+          dash: String((series && series.dash) || 'solid')
+        },
+        marker: {
+          color: String((series && (series.markerColor || series.color)) || color),
+          size: Number((series && series.markerSize) || 5)
+        }
+      };
+    }
+
     function buildSequentialXValues(count) {
       const n = Math.max(0, Number(count) || 0);
       return Array.from({ length: n }, (_, idx) => idx + 1);
@@ -3115,12 +3218,7 @@
         if (points[i].ms === targetMs) return points[i].x;
       }
 
-      if (targetMs < points[0].ms) {
-        const p0 = points[0];
-        const p1 = points[1];
-        if (p1.ms <= p0.ms) return NaN;
-        return p0.x + ((targetMs - p0.ms) / (p1.ms - p0.ms)) * (p1.x - p0.x);
-      }
+      if (targetMs < points[0].ms || targetMs > points[points.length - 1].ms) return NaN;
 
       for (let i = 1; i < points.length; i += 1) {
         const prev = points[i - 1];
@@ -3130,11 +3228,7 @@
           return prev.x + ((targetMs - prev.ms) / (curr.ms - prev.ms)) * (curr.x - prev.x);
         }
       }
-
-      const last = points[points.length - 1];
-      const prev = points[points.length - 2];
-      if (last.ms <= prev.ms) return NaN;
-      return prev.x + ((targetMs - prev.ms) / (last.ms - prev.ms)) * (last.x - prev.x);
+      return points[points.length - 1].x;
     }
 
     function buildSeriesHoverTemplate(axisMode) {
@@ -3165,6 +3259,29 @@
         timeline: projectedTimeline,
         xValues: projectedXValues
       };
+    }
+
+    function buildVisibleObsSeries(simTimeline, rawObs, alignedObs) {
+      const packed = compactSeriesByTimeline(rawObs && rawObs.values, rawObs && rawObs.timeline);
+      const projected = projectSeriesToSimIndex(simTimeline, packed.timeline, packed.values);
+      if (hasFiniteValue(projected.values)) {
+        return {
+          values: projected.values,
+          timeline: projected.timeline,
+          xValues: projected.xValues,
+          packed: packed
+        };
+      }
+      const aligned = Array.isArray(alignedObs) ? alignedObs : [];
+      if (hasFiniteValue(aligned)) {
+        return {
+          values: aligned,
+          timeline: Array.isArray(simTimeline) ? simTimeline : [],
+          xValues: buildSequentialXValues(aligned.length),
+          packed: packed
+        };
+      }
+      return { values: [], timeline: [], xValues: [], packed: packed };
     }
 
     function toGateCardKey(name) {
@@ -3277,26 +3394,114 @@
     }
 
     function parseTimelineInstant(value) {
-      const text = String(value || '').trim();
-      if (!text) return NaN;
-      const normalized = text.replace(/\//g, '-');
-      let ts = Date.parse(normalized);
-      if (Number.isFinite(ts)) return ts;
-      ts = Date.parse(normalized.replace(' ', 'T'));
+      const key = normalizeTimeKey(value);
+      if (!key) return NaN;
+      const m = key.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
+      if (m) {
+        return new Date(
+          Number(m[1]),
+          Number(m[2]) - 1,
+          Number(m[3]),
+          Number(m[4]),
+          Number(m[5]),
+          0,
+          0
+        ).getTime();
+      }
+      const ts = Date.parse(key);
       return Number.isFinite(ts) ? ts : NaN;
+    }
+
+    function endOfCalendarDayMs(ms) {
+      const t = Number(ms);
+      if (!Number.isFinite(t)) return NaN;
+      const d = new Date(t);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    }
+
+    function parseCalculationHorizon(text) {
+      const raw = String(text || '').trim();
+      if (!raw) return null;
+      let parsed = null;
+      try {
+        parsed = JSON.parse(stripJsonComments(raw));
+      } catch (_) {
+        return null;
+      }
+      const params = parsed && typeof parsed === 'object' ? parsed.CalculationParams : null;
+      if (!params || typeof params !== 'object') return null;
+      const startMs = parseTimelineInstant(params.start_time);
+      const hours = Number(params.T);
+      if (!Number.isFinite(startMs) || !Number.isFinite(hours) || hours <= 0) return null;
+      return {
+        start: startMs,
+        end: startMs + hours * 3600 * 1000
+      };
+    }
+
+    function getDemandIntegrationWindow(simTimeline) {
+      if (currentCalcHorizon && Number.isFinite(currentCalcHorizon.start) && Number.isFinite(currentCalcHorizon.end) && currentCalcHorizon.end > currentCalcHorizon.start) {
+        return currentCalcHorizon;
+      }
+      return getTimelineCoverageRange(simTimeline);
     }
 
     function getTimelineRange(timeline) {
       const labels = Array.isArray(timeline) ? timeline : [];
-      let start = NaN;
-      let end = NaN;
+      let start = Infinity;
+      let end = -Infinity;
       for (let i = 0; i < labels.length; i += 1) {
         const ts = parseTimelineInstant(labels[i]);
         if (!Number.isFinite(ts)) continue;
-        if (!Number.isFinite(start)) start = ts;
-        end = ts;
+        if (ts < start) start = ts;
+        if (ts > end) end = ts;
+      }
+      if (!(end >= start) || !Number.isFinite(start) || !Number.isFinite(end)) {
+        return { start: NaN, end: NaN };
       }
       return { start, end };
+    }
+
+    function getTimelineCoverageRange(timeline) {
+      const labels = Array.isArray(timeline) ? timeline : [];
+      const times = [];
+      for (let i = 0; i < labels.length; i += 1) {
+        const ts = parseTimelineInstant(labels[i]);
+        if (Number.isFinite(ts)) times.push(ts);
+      }
+      if (!times.length) return { start: NaN, end: NaN };
+      times.sort((a, b) => a - b);
+      const start = times[0];
+      let end = times[times.length - 1];
+      if (times.length >= 2) {
+        const lastDt = end - times[times.length - 2];
+        if (lastDt > 0) end += lastDt;
+      }
+      return { start, end };
+    }
+
+    function compactSeriesByTimeline(values, timeline) {
+      const list = Array.isArray(values) ? values : [];
+      const labels = Array.isArray(timeline) ? timeline : [];
+      const packed = [];
+      for (let i = 0; i < list.length; i += 1) {
+        const value = Number(list[i]);
+        if (!Number.isFinite(value)) continue;
+        const t = String(labels[i] || '');
+        packed.push({
+          t,
+          v: value,
+          ms: parseTimelineInstant(t)
+        });
+      }
+      packed.sort((a, b) => {
+        if (Number.isFinite(a.ms) && Number.isFinite(b.ms) && a.ms !== b.ms) return a.ms - b.ms;
+        return 0;
+      });
+      return {
+        values: packed.map((item) => item.v),
+        timeline: packed.map((item) => item.t)
+      };
     }
 
     function timelinesOverlap(aTimeline, bTimeline) {
@@ -3370,25 +3575,90 @@
       return hasParsedStep ? steps : new Array(count - 1).fill(1);
     }
 
-    function integrateSeriesByTimeline(values, timeline) {
+    function integrateSeriesByTimeline(values, timeline, windowRange) {
       const list = Array.isArray(values) ? values : [];
-      if (list.length <= 1) return 0;
-      const steps = buildTimelineStepSeconds(timeline, list.length);
+      const labels = Array.isArray(timeline) ? timeline : [];
+      if (!list.length) return 0;
+      const steps = buildTimelineStepSeconds(labels, list.length);
+      const winStart = windowRange && Number.isFinite(windowRange.start) ? windowRange.start : -Infinity;
+      const winEnd = windowRange && Number.isFinite(windowRange.end) ? windowRange.end : Infinity;
+
+      const addPeriod = (value, t0, t1, fallbackDt) => {
+        const v0 = Number(value);
+        if (!Number.isFinite(v0)) return 0;
+        let dt = Number(fallbackDt);
+        if (Number.isFinite(t0) && Number.isFinite(t1)) {
+          const a = Math.max(t0, winStart);
+          const b = Math.min(t1, winEnd);
+          if (!(b > a)) return 0;
+          dt = (b - a) / 1000;
+        } else if (!Number.isFinite(dt) || dt <= 0) {
+          return 0;
+        }
+        return v0 * dt;
+      };
+
       let total = 0;
       for (let i = 0; i < list.length - 1; i += 1) {
-        const v0 = Number(list[i]);
-        const v1 = Number(list[i + 1]);
-        if (!Number.isFinite(v0) || !Number.isFinite(v1)) continue;
-        const dt = Number(steps[i]);
-        if (!Number.isFinite(dt) || dt <= 0) continue;
-        total += ((v0 + v1) * 0.5) * dt;
+        const t0 = parseTimelineInstant(labels[i]);
+        const t1 = parseTimelineInstant(labels[i + 1]);
+        // Flow CSV values are period-start, piecewise-constant rates: the
+        // value at row i applies over [t_i, t_{i+1}). This matches the MILP
+        // volume constraint sum(Q[i] * dt[i]); trapezoidal integration does
+        // not and can falsely report W_task_gap violations at block edges.
+        total += addPeriod(list[i], t0, t1, steps[i]);
+      }
+      // The last CSV row is still a period-start rate. Use the preceding dt
+      // so the integral covers all T steps, matching sum_{i=0}^{T-1} Q[i]*dt[i].
+      if (list.length >= 2) {
+        const tLast = parseTimelineInstant(labels[list.length - 1]);
+        const lastDt = Number(steps[list.length - 2]);
+        if (Number.isFinite(tLast) && Number.isFinite(lastDt) && lastDt > 0) {
+          total += addPeriod(list[list.length - 1], tLast, tLast + lastDt * 1000, lastDt);
+        }
       }
       return total;
     }
 
-    function buildFlowVolumeCompareSpec(simValues, obsValues, timeline) {
-      const simVolume = integrateSeriesByTimeline(simValues, timeline);
-      const obsVolume = integrateSeriesByTimeline(obsValues, timeline);
+    function overlapDurationSeconds(t0, t1, winStart, winEnd) {
+      const a = Math.max(t0, winStart);
+      const b = Math.min(t1, winEnd);
+      if (!(b > a)) return 0;
+      return (b - a) / 1000;
+    }
+
+    function integrateDemandVolumeByTimeline(values, timeline, windowRange) {
+      const packed = compactSeriesByTimeline(values, timeline);
+      const list = Array.isArray(packed.values) ? packed.values : [];
+      const labels = Array.isArray(packed.timeline) ? packed.timeline : [];
+      const points = [];
+      for (let i = 0; i < list.length; i += 1) {
+        const value = Number(list[i]);
+        const t = parseTimelineInstant(labels[i]);
+        if (!Number.isFinite(value) || !Number.isFinite(t)) continue;
+        points.push({ t: t, v: value < 0 ? 0 : value });
+      }
+      if (!points.length) return 0;
+      const winStart = windowRange && Number.isFinite(windowRange.start) ? windowRange.start : -Infinity;
+      const winEnd = windowRange && Number.isFinite(windowRange.end) ? windowRange.end : Infinity;
+      if (points.length === 1) {
+        const point = points[0];
+        const dayEnd = endOfCalendarDayMs(point.t);
+        return point.v * overlapDurationSeconds(point.t, dayEnd, winStart, winEnd);
+      }
+      let total = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        total += points[i].v * overlapDurationSeconds(points[i].t, points[i + 1].t, winStart, winEnd);
+      }
+      return total;
+    }
+
+    function buildFlowVolumeCompareSpec(simValues, obsValues, timeline, obsTimeline) {
+      const simTimeline = Array.isArray(timeline) ? timeline : [];
+      const demandTimeline = Array.isArray(obsTimeline) && obsTimeline.length ? obsTimeline : simTimeline;
+      const windowRange = getDemandIntegrationWindow(simTimeline);
+      const simVolume = integrateSeriesByTimeline(simValues, simTimeline, windowRange);
+      const obsVolume = integrateDemandVolumeByTimeline(obsValues, demandTimeline, windowRange);
       const hasSim = Math.abs(simVolume) > 1e-12;
       const hasObs = Math.abs(obsVolume) > 1e-12;
       const completionRatio = hasObs ? (simVolume / obsVolume) : null;
@@ -3468,12 +3738,13 @@
       const nameSet = new Set();
       (Array.isArray(currentGateRows) ? currentGateRows : []).forEach((gate) => {
         const name = normalizeHeader(gate && gate.name);
-        if (name) nameSet.add(name);
+        if (name && !isSyntheticFlowColumn(name)) nameSet.add(name);
       });
       if (currentFlowMap && currentFlowMap.byName instanceof Map) {
         currentFlowMap.byName.forEach((_, key) => {
           const name = normalizeHeader(key);
-          if (name) nameSet.add(name);
+          if (!name || isSyntheticFlowColumn(name)) return;
+          nameSet.add(name);
         });
       }
 
@@ -3487,19 +3758,25 @@
 
       const specs = [];
       names.forEach((name) => {
+        const dMatch = String(name || '').trim().match(/^d(\d+)$/i);
+        const displayName = (dMatch && currentFlowIdDisplayName.get(dMatch[1])) || name;
+        if (dMatch && displayName && displayName !== name && hasFiniteValue(getFlowSeriesForName(displayName))) return;
         const values = getFlowSeriesForName(name);
         if (!hasFiniteValue(values)) return;
-        const obsValues = getObsSeriesForName(name);
+        const obsLookupName = displayName || name;
+        const obsValues = getObsSeriesForName(obsLookupName);
+        const rawObs = getRawObsSeriesForName(obsLookupName);
         const timeline = Array.isArray(currentFlowMap.timeline) ? currentFlowMap.timeline : [];
-        const flowCompare = buildFlowVolumeCompareSpec(values, obsValues, timeline);
+        const visibleObs = buildVisibleObsSeries(timeline, rawObs, obsValues);
+        const flowCompare = buildFlowVolumeCompareSpec(values, rawObs.values, timeline, rawObs.timeline);
         const lastValue = getLastFiniteValue(values);
-        const obsLastValue = getLastFiniteValue(obsValues);
-        const inIni = currentGatesIniNameSet.has(canonicalName(name));
-        const gateTypeValue = getGateTypeForName(name);
-        const hasDemand = hasDemandForName(name);
+        const obsLastValue = getLastFiniteValue(visibleObs.values);
+        const inIni = currentGatesIniNameSet.has(canonicalName(obsLookupName)) || currentGatesIniNameSet.has(canonicalName(name));
+        const gateTypeValue = getGateTypeForName(obsLookupName);
+        const hasDemand = hasDemandForName(obsLookupName);
         const headerMeta = (inIni ? 'Gates.ini' : '非Gates.ini') + ' | 末值=' +
           (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
-          (hasFiniteValue(obsValues) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '') +
+          (hasFiniteValue(visibleObs.values) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '') +
           ' | 完成度=' + (flowCompare.completionRatio == null ? '-' : (flowCompare.completionRatio * 100).toFixed(1) + '%');
 
         const seriesList = [
@@ -3514,8 +3791,7 @@
             mode: 'lines'
           }
         ];
-        const rawObs = getRawObsSeriesForName(name);
-        const projectedObs = projectSeriesToSimIndex(timeline, rawObs.timeline, rawObs.values);
+        const projectedObs = visibleObs;
         if (hasFiniteValue(projectedObs.values)) {
           seriesList.push({
             label: '实测',
@@ -3524,15 +3800,14 @@
             xValues: projectedObs.xValues,
             xMode: 'index',
             color: '#dc2626',
-            dash: 'solid',
-            mode: 'markers',
-            markerColor: '#dc2626',
-            markerSize: 5
+            type: 'bar',
+            mode: 'bar',
+            markerColor: '#dc2626'
           });
         }
 
         specs.push({
-          title: name,
+          title: displayName,
           subtitle: '闸门流量过程线',
           timeline: timeline,
           xAxisMode: 'sim-index',
@@ -3599,6 +3874,7 @@
         '@media (max-width: 860px){body{padding:10px;}.standalone-head h1{font-size:14px;}}',
         '</style>',
         '<script src="/vendor/plotly-2.35.2.min.js"><\\/script>',
+        '<script>if(!window.Plotly){document.write(\'<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"><\\/script>\');}<\\/script>',
         '</head>',
         '<body>',
         '<div class="standalone-head"><h1>' + safeTitle + '</h1><p>' + safeSubtitle + '</p></div>',
@@ -3736,6 +4012,33 @@
         '    }',
         '    return {x:x,y:y,t:t};',
         '  }',
+        '  function isBarSeries(series){',
+        '    var type = String((series && series.type) || "").trim().toLowerCase();',
+        '    var mode = String((series && series.mode) || "").trim().toLowerCase();',
+        '    return type === "bar" || mode === "bar";',
+        '  }',
+        '  function inferBarWidth(xValues){',
+        '    var xs = [];',
+        '    (Array.isArray(xValues) ? xValues : []).forEach(function(value){ var n = Number(value); if (Number.isFinite(n)) xs.push(n); });',
+        '    xs.sort(function(a,b){ return a - b; });',
+        '    var minDx = Infinity;',
+        '    for (var i = 1; i < xs.length; i += 1) { var d = xs[i] - xs[i - 1]; if (d > 0 && d < minDx) minDx = d; }',
+        '    if (!Number.isFinite(minDx) || !(minDx > 0)) return 0.72;',
+        '    return minDx * 0.72;',
+        '  }',
+        '  function buildPlotlySeriesTrace(series, points, hoverTemplate){',
+        '    var customdata = points.t || [];',
+        '    var name = String((series && series.label) || "");',
+        '    var color = String((series && series.color) || "#0f766e");',
+        '    if (isBarSeries(series)) {',
+        '      var barColor = String((series && (series.markerColor || series.color)) || "#dc2626");',
+        '      return { x: points.x, y: points.y, customdata: customdata, type: "bar", name: name, hovertemplate: hoverTemplate,',
+        '        marker: { color: "rgba(220, 38, 38, 0.42)", line: { color: barColor, width: 0.8 } }, width: inferBarWidth(points.x), opacity: 0.92 };',
+        '    }',
+        '    return { x: points.x, y: points.y, customdata: customdata, type: "scatter", mode: String((series && series.mode) || "lines"), name: name, hovertemplate: hoverTemplate,',
+        '      line: { color: color, width: 2, dash: String((series && series.dash) || "solid") },',
+        '      marker: { color: String((series && (series.markerColor || series.color)) || color), size: Number((series && series.markerSize) || 5) } };',
+        '  }',
         '  function draw(){',
         '    var holder = document.getElementById("standaloneChartSpecs");',
         '    if (!holder) return;',
@@ -3747,27 +4050,28 @@
         '      var host = document.getElementById("popup-plot-" + (i + 1));',
         '      if (!host) continue;',
         '      var traces = [];',
+        '      var barTraces = [];',
+        '      var lineTraces = [];',
         '      var list = Array.isArray(spec.seriesList) ? spec.seriesList : [];',
         '      var axisMode = String(spec.xAxisMode || "").trim().toLowerCase();',
         '      var hoverTemplate = buildSeriesHoverTemplate(axisMode);',
+        '      var hasBar = false;',
         '      for(var j=0;j<list.length;j+=1){',
         '        var s = list[j] || {};',
         '        var pts = buildPlotPoints(s, spec.timeline);',
         '        if (!pts.y.length) continue;',
-        '        traces.push({',
-        '          x: pts.x, y: pts.y, customdata: pts.t, type: "scatter",',
-        '          mode: String(s.mode || "lines"), name: String(s.label || ""),',
-        '          hovertemplate: hoverTemplate,',
-        '          line: { color: String(s.color || "#0f766e"), width: 2, dash: String(s.dash || "solid") },',
-        '          marker: { color: String(s.markerColor || s.color || "#0f766e"), size: Number(s.markerSize || 5) }',
-        '        });',
+        '        var trace = buildPlotlySeriesTrace(s, pts, hoverTemplate);',
+        '        if (trace.type === "bar") { hasBar = true; barTraces.push(trace); } else { lineTraces.push(trace); }',
         '      }',
+        '      traces = barTraces.concat(lineTraces);',
         '      if (!traces.length) { host.innerHTML = "<div class=\\"chart-empty\\">无数据</div>"; continue; }',
         '      var axisConfig = axisMode === "sim-index" ? buildIndexTimelineAxisConfig(spec.timeline) : buildTimelineAxisConfig(spec.timeline);',
         '      Plotly.newPlot(host, traces, {',
         '        margin: { l: 44, r: 12, t: 0, b: 28 },',
         '        paper_bgcolor: "rgba(0,0,0,0)",',
         '        plot_bgcolor: "rgba(15,118,110,0.04)",',
+        '        barmode: hasBar ? "overlay" : "group",',
+        '        bargap: 0.12,',
         '        showlegend: true,',
         '        legend: { orientation: "h", x: 0, y: 1.2, font: { size: 10 } },',
         '        xaxis: { type: axisConfig.type, range: axisConfig.range, tickmode: axisConfig.tickmode, tickvals: axisConfig.tickvals, ticktext: axisConfig.ticktext, dtick: axisConfig.dtick, title: { text: axisConfig.title, standoff: 2, font: { size: 10 } }, tickfont: { size: 10, color: "#64748b" }, showgrid: true, gridcolor: "rgba(148,163,184,0.18)", zeroline: false, automargin: true },',
@@ -3980,31 +4284,24 @@
         const host = document.getElementById(task.id);
         if (!host) return;
         const traces = [];
+        const barTraces = [];
+        const lineTraces = [];
         const axisMode = String(task.axisOptions && task.axisOptions.mode || '').trim().toLowerCase();
         const hoverTemplate = buildSeriesHoverTemplate(axisMode);
+        let hasBar = false;
         task.seriesList.forEach((series) => {
           const points = buildPlotPoints(series, task.timeline);
           if (!points.y.length) return;
-          const mode = String(series.mode || 'lines');
-          traces.push({
-            x: points.x,
-            y: points.y,
-            customdata: points.timeLabels,
-            type: 'scatter',
-            mode,
-            name: String(series.label || ''),
-            hovertemplate: hoverTemplate,
-            line: {
-              color: String(series.color || '#0f766e'),
-              width: 2,
-              dash: String(series.dash || 'solid')
-            },
-            marker: {
-              color: String(series.markerColor || series.color || '#0f766e'),
-              size: Number(series.markerSize || 5)
-            }
-          });
+          const trace = buildPlotlySeriesTrace(series, points, hoverTemplate);
+          if (trace.type === 'bar') {
+            hasBar = true;
+            barTraces.push(trace);
+          } else {
+            lineTraces.push(trace);
+          }
         });
+        traces.push.apply(traces, barTraces);
+        traces.push.apply(traces, lineTraces);
         if (!traces.length) {
           host.innerHTML = '<div class="chart-empty">无数据</div>';
           return;
@@ -4018,6 +4315,8 @@
           margin: { l: 44, r: 12, t: 0, b: 28 },
           paper_bgcolor: 'rgba(0,0,0,0)',
           plot_bgcolor: 'rgba(15,118,110,0.04)',
+          barmode: hasBar ? 'overlay' : 'group',
+          bargap: 0.12,
           showlegend: true,
           legend: { orientation: 'h', x: 0, y: 1.2, font: { size: 10 } },
           xaxis: {
@@ -4079,13 +4378,11 @@
       const yUnit = String(opts.yUnit || '');
       const obsValues = Array.isArray(opts.obsValues) ? opts.obsValues : [];
       const showTimelineInfo = !!opts.showTimelineInfo;
-      const headerMeta = String(opts.headerMeta || '').trim();
+      let headerMeta = String(opts.headerMeta || '').trim();
       const finiteValues = values.filter((value) => Number.isFinite(value));
-      const obsFinite = obsValues.filter((value) => Number.isFinite(value));
       const lastValue = getLastFiniteValue(values);
       const minValue = finiteValues.length ? Math.min.apply(null, finiteValues) : null;
       const maxValue = finiteValues.length ? Math.max.apply(null, finiteValues) : null;
-      const obsLastValue = getLastFiniteValue(obsValues);
       const chartId = 'plotly-chart-' + (++plotlyChartSeq);
       const useSimIndexAxis = String(opts.xAxisMode || '').trim().toLowerCase() === 'sim-index';
       const seriesList = [
@@ -4099,35 +4396,31 @@
           dash: 'solid'
         }
       ];
-      const rawObsSeries = opts.rawObsSeries || null;
-      const hasRawObs = !!(rawObsSeries && hasFiniteValue(rawObsSeries.values));
-      if (hasRawObs) {
-        const projectedObs = useSimIndexAxis
-          ? projectSeriesToSimIndex(opts.timeline, rawObsSeries.timeline, rawObsSeries.values)
-          : rawObsSeries;
-        seriesList.push({
+      const obsAsBar = String(opts.obsRender || '').toLowerCase() === 'bar'
+        || String(yUnit).indexOf('m^3') >= 0
+        || String(yUnit).indexOf('m³') >= 0;
+      const obsSeriesStyle = obsAsBar
+        ? { type: 'bar', mode: 'bar', color: '#dc2626', markerColor: '#dc2626' }
+        : { type: 'scatter', mode: 'markers', color: '#dc2626', markerColor: '#dc2626', markerSize: 5 };
+      const visibleObs = buildVisibleObsSeries(opts.timeline, opts.rawObsSeries, obsValues);
+      const plottedObsFinite = hasFiniteValue(visibleObs.values);
+      const obsLastValue = getLastFiniteValue(visibleObs.values);
+      if (obsAsBar) {
+        const rawObs = opts.rawObsSeries || {};
+        const flowCompare = buildFlowVolumeCompareSpec(values, rawObs.values, opts.timeline, rawObs.timeline);
+        if (headerMeta.indexOf('完成度=') < 0) {
+          headerMeta = (headerMeta ? headerMeta + ' | ' : '') +
+            '完成度=' + (flowCompare.completionRatio == null ? '-' : (flowCompare.completionRatio * 100).toFixed(1) + '%');
+        }
+      }
+      if (plottedObsFinite) {
+        seriesList.push(Object.assign({
           label: '实测',
-          values: projectedObs.values,
-          xTimeline: projectedObs.timeline,
-          xValues: projectedObs.xValues,
-          xMode: useSimIndexAxis ? 'index' : 'time',
-          color: '#dc2626',
-          mode: 'markers',
-          markerColor: '#dc2626',
-          markerSize: 5
-        });
-      } else if (obsFinite.length) {
-        seriesList.push({
-          label: '实测',
-          values: obsValues,
-          xTimeline: opts.timeline,
-          xValues: useSimIndexAxis ? buildSequentialXValues(Array.isArray(opts.timeline) ? opts.timeline.length : obsValues.length) : null,
-          xMode: useSimIndexAxis ? 'index' : 'time',
-          color: '#dc2626',
-          mode: 'markers',
-          markerColor: '#dc2626',
-          markerSize: 5
-        });
+          values: visibleObs.values,
+          xTimeline: visibleObs.timeline,
+          xValues: visibleObs.xValues,
+          xMode: useSimIndexAxis ? 'index' : 'time'
+        }, obsSeriesStyle));
       }
       queuePlotlyChart(chartId, seriesList, opts.timeline, yUnit, {
         mode: useSimIndexAxis ? 'sim-index' : 'timeline'
@@ -4139,7 +4432,7 @@
         '<div id="' + chartId + '" class="detail-chart-plot"></div>',
         (!headerMeta ? '<div class="detail-chart-meta"><span>min=' + (minValue == null ? '-' : minValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span><span>max=' + (maxValue == null ? '-' : maxValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
         (!headerMeta ? '<div class="detail-chart-meta"><span>点数=' + finiteValues.length + '</span><span>末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
-        (!headerMeta && obsFinite.length ? '<div class="detail-chart-meta"><span>实测点数=' + obsFinite.length + '</span><span>实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
+        (!headerMeta && plottedObsFinite ? '<div class="detail-chart-meta"><span>实测点数=' + visibleObs.values.filter((value) => Number.isFinite(value)).length + '</span><span>实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + (yUnit ? (' ' + yUnit) : '') + '</span></div>' : ''),
         '</div>'
       ].join('');
     }
@@ -4217,6 +4510,10 @@
       return normalizeHeader(value).replace(/[\s\t\r\n]/g, '');
     }
 
+    function isSyntheticFlowColumn(name) {
+      return /^(?:inflow|leakage|d)\d+$/i.test(String(name || '').trim());
+    }
+
     function formatSegmentLabel(source, target, canal) {
       const s = String(source || '').trim();
       const t = String(target || '').trim();
@@ -4250,7 +4547,7 @@
     function getObsSeriesForName(name) {
       const key = normalizeHeader(name);
       const keyCanon = canonicalName(key);
-      if (keyCanon.indexOf('inflow') === 0 || keyCanon.indexOf('leakage') === 0 || keyCanon.indexOf('d') === 0) {
+      if (isSyntheticFlowColumn(keyCanon)) {
         return [];
       }
       const aligned = currentObsAlignedByFlow.get(key);
@@ -4318,7 +4615,7 @@
 
     function getRawObsSeriesForName(name) {
       const keyCanon = canonicalName(normalizeHeader(name));
-      if (keyCanon.indexOf('inflow') === 0 || keyCanon.indexOf('leakage') === 0 || keyCanon.indexOf('d') === 0) {
+      if (isSyntheticFlowColumn(keyCanon)) {
         return { values: [], timeline: [] };
       }
       return getRawSeriesWithTimeline(currentObsMap, currentObsCanonical, name);
@@ -4851,14 +5148,15 @@
 
         const obsValues = getObsSeriesForName(name);
         const rawObsSeries = getRawObsSeriesForName(name);
+        const visibleObs = buildVisibleObsSeries(currentFlowMap.timeline, rawObsSeries, obsValues);
         const lastValue = getLastFiniteValue(values);
-        const obsLastValue = getLastFiniteValue(obsValues);
+        const obsLastValue = getLastFiniteValue(visibleObs.values);
         const role = inflowNodes.has(name)
           ? '入流关联闸门'
           : (outflowNodes.has(name) ? '出流关联闸门' : '关联闸门');
         const tag = isInGatesIni ? '' : ' [非Gates.ini]';
         const headerMeta = role + ' | 末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
-          (obsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+          (hasFiniteValue(visibleObs.values) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
         relatedFlowCards.push(buildChartCardHtml('关联闸门流量', values, name + tag, {
           timeline: currentFlowMap.timeline,
           xAxisMode: 'sim-index',
@@ -4888,10 +5186,11 @@
       if (currentGateValues.length) {
         const currentObsValues = getObsSeriesForName(gateName);
         const currentRawObsSeries = getRawObsSeriesForName(gateName);
+        const visibleObs = buildVisibleObsSeries(currentFlowMap.timeline, currentRawObsSeries, currentObsValues);
         const lastValue = getLastFiniteValue(currentGateValues);
-        const obsLastValue = getLastFiniteValue(currentObsValues);
+        const obsLastValue = getLastFiniteValue(visibleObs.values);
         const headerMeta = '末值=' + (lastValue == null ? '-' : lastValue.toFixed(3)) + ' m^3/s' +
-          (currentObsValues.length ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
+          (hasFiniteValue(visibleObs.values) ? (' | 实测末值=' + (obsLastValue == null ? '-' : obsLastValue.toFixed(3)) + ' m^3/s') : '');
         flowCards.push(buildChartCardHtml('当前闸门流量', currentGateValues, gateName, {
           timeline: currentFlowMap.timeline,
           xAxisMode: 'sim-index',
@@ -4998,7 +5297,7 @@
         fetchText(resolveDataPath('mesh/Gates.ini')).catch(() => ''),
         fetchConfiguredText(seriesPathEl, {
           required: true,
-          fallbacks: ['input/channel_Gates_Stastic_h1.csv', 'output/stage.csv', 'output/stage/stage.csv', 'input/stage.csv']
+          fallbacks: ['input/channel_Gates_Stastic_h1.csv', 'output/stage.csv', 'output/stage/stage.csv', 'input/stage.csv', 'output/stage_encode.csv', 'output/stage_encode_td.csv']
         }),
         fetchTextFirstResolved(stageH2Candidates).catch(() => ({ path: '', text: '' })),
         fetchConfiguredText(stageObsPathEl, { required: false }),
@@ -5006,8 +5305,11 @@
           required: true,
           fallbacks: [
             'output/action.csv',
+            'output/action_td.csv',
             'output/channel_Gates_Stastic.csv',
-            'output/channel_Gates_Stastic_Q_action.csv'
+            'output/channel_Gates_Stastic_Q_action.csv',
+            'output/e_encode.csv',
+            'output/e_encode_td.csv'
           ]
         }),
         fetchConfiguredPath(obsPathValue, { required: false, fallbacks: ['input/action_obs_td.csv'] }),
@@ -5029,6 +5331,7 @@
       );
       const gateDemandNameSet = buildGateDemandNameSetFromInputJson(inputJsonText);
       currentGateDemandNameSet = gateDemandNameSet.size ? gateDemandNameSet : new Set(currentGatesIniNameSet);
+      currentCalcHorizon = parseCalculationHorizon(inputJsonText);
       const gateMeshMatched = isGateMeshOneToOne(gatesFromCsv, gatesFromIni);
       const displayGateInfo = buildDisplayGatesFromIni(gatesFromIni, gatesFromCsv, gatesIniItems);
       const gates = displayGateInfo.gates.length ? displayGateInfo.gates : (gatesFromIni.length ? gatesFromIni : gatesFromCsv);
@@ -5042,10 +5345,11 @@
         : { timeline: [], byName: new Map(), seriesHeaders: [], format: '', sourcePath: '' };
       const flowSource = await resolveGateFlowSource(flowResolved, obsResolved);
       const flowMap = flowSource.flowMap;
+      const obsMap = flowSource.obsMap;
       const internalFlowCsv = await fetchText(resolveDataPath('input/action.csv')).catch(() => '');
       const internalFlowMap = internalFlowCsv ? loadSeriesMap(internalFlowCsv) : { timeline: [], byName: new Map(), seriesHeaders: [], format: 'pivot', sourcePath: resolveDataPath('input/action.csv') };
-      const obsMap = flowSource.obsMap;
       const edges = loadEdges(edgesCsv);
+      buildGateIdMaps(edges);
       const edgeNodeCanonicalSet = buildEdgeNodeCanonicalSet(edges);
       const iniMissingEdgeNameSet = buildIniMissingEdgeGateNameSet(gates, currentGatesIniNameSet, edgeNodeCanonicalSet);
       currentIniGatesMissingEdgeSet = iniMissingEdgeNameSet;

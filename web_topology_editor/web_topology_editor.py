@@ -6,6 +6,7 @@ import csv
 import errno
 import heapq
 import html
+import importlib.util
 import json
 import math
 import mimetypes
@@ -61,8 +62,7 @@ const select=document.getElementById('caseSelect'),statusEl=document.getElementB
 function updateLinks(){
   const name=select.value, encoded=encodeURIComponent(name);
   document.getElementById('topoLink').href='/topo?data='+encoded;
-  const gateOrigin=location.protocol+'//'+location.hostname+':8610';
-  document.getElementById('mapLink').href=gateOrigin+'/gate_curve_map/gate_curve_map.html?data='+encoded;
+  document.getElementById('mapLink').href='/gate_curve_map/gate_curve_map.html?data='+encoded;
 }
 fetch('/api/cases').then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))).then(data=>{
   const cases=Array.isArray(data.cases)?data.cases:[]; select.innerHTML='';
@@ -9234,6 +9234,22 @@ def build_path_tree_items(base_dir: Path, root_path: Path, max_depth: int = 4) -
     return items
 
 
+_GATE_MAP_SERVER = None
+
+
+def _gate_map_server():
+    global _GATE_MAP_SERVER
+    if _GATE_MAP_SERVER is None:
+        module_path = Path(__file__).resolve().parent.parent / "gate_curve_map" / "gate_curve_map_server.py"
+        spec = importlib.util.spec_from_file_location("gate_curve_map_server", module_path)
+        module = importlib.util.module_from_spec(spec)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"failed to load {module_path}")
+        spec.loader.exec_module(module)
+        _GATE_MAP_SERVER = module
+    return _GATE_MAP_SERVER
+
+
 class AppHandler(BaseHTTPRequestHandler):
     edges_path: Optional[Path] = Path("mesh/edges.csv")
     shp_path: Path = Path("mesh/shp/edges.shp")
@@ -9273,6 +9289,72 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_bytes(self, payload: bytes, content_type: str, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _handle_fs_api(self, parsed) -> bool:
+        gcm = _gate_map_server()
+        query = parse_qs(parsed.query)
+        if parsed.path == "/api/fs/read":
+            raw_path = str((query.get("path") or [""])[0])
+            if not raw_path:
+                self._json_response({"error": "missing path"}, status=400)
+                return True
+            path = gcm.resolve_fs_api_path(raw_path)
+            if not path.is_file():
+                self._json_response({"error": "file not found", "path": raw_path}, status=404)
+                return True
+            if path.suffix.lower() in gcm.TEXT_EXTENSIONS:
+                text = gcm.decode_text_bytes(path.read_bytes())
+                body = text.encode("utf-8")
+                content_type = mimetypes.guess_type(path.name)[0] or "text/plain"
+                if "charset=" not in content_type.lower():
+                    content_type = f"{content_type}; charset=utf-8"
+                self._send_bytes(body, content_type)
+                return True
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            self._send_bytes(path.read_bytes(), content_type)
+            return True
+        if parsed.path == "/api/fs/list-dir":
+            raw_path = str((query.get("path") or [""])[0])
+            if not raw_path:
+                self._json_response({"error": "missing path"}, status=400)
+                return True
+            path = gcm.resolve_fs_api_path(raw_path)
+            if not path.exists() or not path.is_dir():
+                self._json_response({"error": "directory not found", "path": raw_path}, status=404)
+                return True
+            items = sorted([item.name for item in path.iterdir() if item.is_dir()], key=str.lower)
+            self._json_response({"items": items})
+            return True
+        return False
+
+    def _serve_workspace_asset(self, rel_path: str) -> bool:
+        target = (self.base_dir / rel_path).resolve()
+        try:
+            target.relative_to(self.base_dir.resolve())
+        except ValueError:
+            return False
+        if not target.is_file():
+            return False
+        gcm = _gate_map_server()
+        if target.suffix.lower() in gcm.TEXT_EXTENSIONS:
+            text = gcm.decode_text_bytes(target.read_bytes())
+            body = text.encode("utf-8")
+            content_type = mimetypes.guess_type(target.name)[0] or "text/plain"
+            if "charset=" not in content_type.lower():
+                content_type = f"{content_type}; charset=utf-8"
+            self._send_bytes(body, content_type)
+            return True
+        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        self._send_bytes(target.read_bytes(), content_type)
+        return True
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -9487,6 +9569,15 @@ class AppHandler(BaseHTTPRequestHandler):
           except Exception as exc:
             self._json_response({"error": str(exc)}, status=400)
           return
+
+        if parsed.path in ("/api/fs/read", "/api/fs/list-dir"):
+            if self._handle_fs_api(parsed):
+                return
+
+        rel = parsed.path.lstrip("/")
+        if rel.startswith("gate_curve_map/") or rel.startswith("vendor/"):
+            if self._serve_workspace_asset(rel):
+                return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -9741,14 +9832,18 @@ class AppHandler(BaseHTTPRequestHandler):
             self._json_response({"error": str(exc)}, status=500)
 
 
-def run_server(host: str, port: int, edges_path: Optional[Path], startup_warning: str = "") -> None:
+def run_server(host: str, port: int, edges_path: Optional[Path], startup_warning: str = "", data_root: Optional[Path] = None) -> None:
     class _Handler(AppHandler):
         pass
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.resolve()
     _Handler.base_dir = repo_root if (repo_root / "data").exists() else script_dir
-    _Handler.cases_root = (_Handler.base_dir / "data").resolve() if (_Handler.base_dir / "data").exists() else _Handler.base_dir
+    requested_data = Path(data_root).expanduser().resolve() if data_root else None
+    if requested_data is not None and requested_data.exists() and requested_data.is_dir():
+        _Handler.cases_root = requested_data
+    else:
+        _Handler.cases_root = (_Handler.base_dir / "data").resolve() if (_Handler.base_dir / "data").exists() else _Handler.base_dir
     _Handler.startup_warning = str(startup_warning or "")
     if edges_path is not None:
         _Handler.edges_path = edges_path.resolve()
@@ -9758,7 +9853,9 @@ def run_server(host: str, port: int, edges_path: Optional[Path], startup_warning
         _Handler.shp_path = (_Handler.base_dir / "mesh" / "shp" / "edges.shp").resolve()
 
     server = ThreadingHTTPServer((host, port), _Handler)
-    print(f"渠网拓扑建模工具已启动: http://{host}:{port}")
+    print(f"OCIS 可视化工作台已启动: http://{host}:{port}")
+    print(f"闸门曲线地图: http://{host}:{port}/gate_curve_map/gate_curve_map.html")
+    print(f"案例目录: {_Handler.cases_root}")
     if _Handler.edges_path is not None:
         print(f"edges 文件: {_Handler.edges_path}")
     else:
@@ -9783,29 +9880,55 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Edges 渠网拓扑建模工具")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8510, help="端口，默认 8510")
+    parser.add_argument("--data", default="", help="案例 data 目录，默认使用仓库内 data/")
     parser.add_argument("--edges", default="data/sj_zonggan-d0/mesh/edges.csv", help="edges.csv 路径")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    data_root = Path(args.data).expanduser() if str(args.data or "").strip() else None
+    if data_root is not None and not data_root.is_absolute():
+        data_root = (Path.cwd() / data_root).resolve()
+    elif data_root is not None:
+        data_root = data_root.resolve()
     edges_path = Path(args.edges)
     startup_warning = ""
     if not edges_path.is_absolute():
-        edges_path = (Path.cwd() / edges_path).resolve()
+        rel = Path(args.edges)
+        if data_root is not None:
+            parts = rel.parts
+            if parts and parts[0] == "data":
+                edges_path = (data_root.joinpath(*parts[1:])).resolve()
+            else:
+                edges_path = (data_root / rel).resolve()
+        else:
+            edges_path = (Path.cwd() / rel).resolve()
     if not edges_path.exists():
-        candidates = [
-        (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
-        (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
-        (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
-        (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
-        (Path.cwd() / "data" / "ph" / "mesh" / "edges.csv").resolve(),
-        (Path.cwd() / "data" / "ph" / "mesh" / "edges_new.csv").resolve(),
-            (Path.cwd() / "mesh" / "edges.csv").resolve(),
-            (Path.cwd() / "mesh" / "edges_new.csv").resolve(),
-            (Path.cwd() / "ph" / "mesh" / "edges.csv").resolve(),
-            (Path.cwd() / "ph" / "mesh" / "edges_new.csv").resolve(),
-        ]
+        candidates = []
+        if data_root is not None:
+            candidates.extend(
+                [
+                    (data_root / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
+                    (data_root / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
+                    (data_root / "ph" / "mesh" / "edges.csv").resolve(),
+                    (data_root / "ph" / "mesh" / "edges_new.csv").resolve(),
+                ]
+            )
+        candidates.extend(
+            [
+                (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
+                (Path.cwd() / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
+                (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges.csv").resolve(),
+                (Path.cwd() / ".." / "data" / "sj_zonggan-d0" / "mesh" / "edges_new.csv").resolve(),
+                (Path.cwd() / "data" / "ph" / "mesh" / "edges.csv").resolve(),
+                (Path.cwd() / "data" / "ph" / "mesh" / "edges_new.csv").resolve(),
+                (Path.cwd() / "mesh" / "edges.csv").resolve(),
+                (Path.cwd() / "mesh" / "edges_new.csv").resolve(),
+                (Path.cwd() / "ph" / "mesh" / "edges.csv").resolve(),
+                (Path.cwd() / "ph" / "mesh" / "edges_new.csv").resolve(),
+            ]
+        )
         fallback = next((p for p in candidates if p.exists()), None)
         if fallback is None:
             startup_warning = f"默认路径不存在: {edges_path}。服务已启动，请在页面中选择有效 edges 文件。"
@@ -9823,7 +9946,7 @@ def main() -> None:
         return
 
     try:
-        run_server(args.host, args.port, edges_path, startup_warning=startup_warning)
+        run_server(args.host, args.port, edges_path, startup_warning=startup_warning, data_root=data_root)
     except OSError as exc:
         if getattr(exc, "errno", None) in (errno.EADDRINUSE, 10048):
             existing = _query_running_server(args.host, args.port)

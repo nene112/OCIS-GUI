@@ -267,6 +267,11 @@
     }
   </style>
   <script src="/vendor/plotly-2.35.2.min.js"></script>
+  <script>
+    if (!window.Plotly) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"><\\/script>');
+    }
+  </script>
 </head>
 <body>
   <div class="standalone-head">
@@ -482,6 +487,69 @@
       return { x: x, y: y, t: t };
     }
 
+    function isBarSeries(series) {
+      var type = String((series && series.type) || "").trim().toLowerCase();
+      var mode = String((series && series.mode) || "").trim().toLowerCase();
+      return type === "bar" || mode === "bar";
+    }
+
+    function inferBarWidth(xValues) {
+      var xs = [];
+      (Array.isArray(xValues) ? xValues : []).forEach(function(value) {
+        var n = Number(value);
+        if (Number.isFinite(n)) xs.push(n);
+      });
+      xs.sort(function(a, b) { return a - b; });
+      var minDx = Infinity;
+      for (var i = 1; i < xs.length; i += 1) {
+        var d = xs[i] - xs[i - 1];
+        if (d > 0 && d < minDx) minDx = d;
+      }
+      if (!Number.isFinite(minDx) || !(minDx > 0)) return 0.72;
+      return minDx * 0.72;
+    }
+
+    function buildPlotlySeriesTrace(series, points, hoverTemplate) {
+      var customdata = points.t || [];
+      var name = String((series && series.label) || "");
+      var color = String((series && series.color) || "#0f766e");
+      if (isBarSeries(series)) {
+        var barColor = String((series && (series.markerColor || series.color)) || "#dc2626");
+        return {
+          x: points.x,
+          y: points.y,
+          customdata: customdata,
+          type: "bar",
+          name: name,
+          hovertemplate: hoverTemplate,
+          marker: {
+            color: "rgba(220, 38, 38, 0.42)",
+            line: { color: barColor, width: 0.8 }
+          },
+          width: inferBarWidth(points.x),
+          opacity: 0.92
+        };
+      }
+      return {
+        x: points.x,
+        y: points.y,
+        customdata: customdata,
+        type: "scatter",
+        mode: String((series && series.mode) || "lines"),
+        name: name,
+        hovertemplate: hoverTemplate,
+        line: {
+          color: color,
+          width: 2,
+          dash: String((series && series.dash) || "solid")
+        },
+        marker: {
+          color: String((series && (series.markerColor || series.color)) || color),
+          size: Number((series && series.markerSize) || 5)
+        }
+      };
+    }
+
     function buildFlowCompareMarkup(spec) {
       var compare = spec && spec.flowCompare;
       if (!compare || compare.enabled !== true) return "";
@@ -693,6 +761,8 @@
         margin: { l: 44, r: 12, t: 4, b: 28 },
         paper_bgcolor: "rgba(0,0,0,0)",
         plot_bgcolor: "rgba(15,118,110,0.04)",
+        barmode: "overlay",
+        bargap: 0.12,
         showlegend: settings.showLegend,
         legend: {
           orientation: settings.legendOrientation,
@@ -797,31 +867,24 @@
         if (!host) return;
 
         var traces = [];
+        var barTraces = [];
+        var lineTraces = [];
         var axisMode = String((spec && spec.xAxisMode) || "").trim().toLowerCase();
         var hoverTemplate = buildSeriesHoverTemplate(axisMode);
         var seriesList = Array.isArray(spec && spec.seriesList) ? spec.seriesList : [];
+        var hasBar = false;
         seriesList.forEach(function(series) {
           var points = buildPlotPoints(series, spec && spec.timeline);
           if (!points.y.length) return;
-          traces.push({
-            x: points.x,
-            y: points.y,
-            customdata: points.t,
-            type: "scatter",
-            mode: String((series && series.mode) || "lines"),
-            name: String((series && series.label) || ""),
-            hovertemplate: "步序=%{x}<br>时间=%{customdata}<br>数值=%{y:.3f}<extra>%{fullData.name}</extra>",
-            line: {
-              color: String((series && series.color) || "#0f766e"),
-              width: 2,
-              dash: String((series && series.dash) || "solid")
-            },
-            marker: {
-              color: String((series && (series.markerColor || series.color)) || "#0f766e"),
-              size: Number((series && series.markerSize) || 5)
-            }
-          });
+          var trace = buildPlotlySeriesTrace(series, points, hoverTemplate);
+          if (trace.type === "bar") {
+            hasBar = true;
+            barTraces.push(trace);
+          } else {
+            lineTraces.push(trace);
+          }
         });
+        traces = barTraces.concat(lineTraces);
         if (!traces.length) {
           host.innerHTML = '<div class="chart-empty">无数据</div>';
           return;
