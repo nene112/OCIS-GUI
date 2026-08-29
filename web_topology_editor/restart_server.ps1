@@ -2,7 +2,8 @@ param(
   [string]$BindHost = '127.0.0.1',
   [int]$Port = 8510,
   [int]$WaitSeconds = 12,
-  [string]$EdgesPath = ''
+  [string]$EdgesPath = '',
+  [string]$DataPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,33 @@ function Stop-OldServer {
     try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop } catch {}
   }
   Start-Sleep -Milliseconds 400
+}
+
+function Resolve-DataRoot {
+  param([string]$RequestedPath)
+
+  $repoRoot = Split-Path -Parent $scriptDir
+  $candidates = New-Object System.Collections.Generic.List[string]
+
+  if(-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+    if([System.IO.Path]::IsPathRooted($RequestedPath)) {
+      [void]$candidates.Add($RequestedPath)
+    } else {
+      [void]$candidates.Add((Join-Path $scriptDir $RequestedPath))
+      [void]$candidates.Add((Join-Path $repoRoot $RequestedPath))
+    }
+  }
+
+  [void]$candidates.Add((Join-Path (Split-Path $repoRoot) 'ocismilpnet-mac-win\data'))
+  [void]$candidates.Add((Join-Path $repoRoot 'data'))
+
+  foreach($candidate in $candidates) {
+    if(Test-Path $candidate) {
+      return (Resolve-Path $candidate).Path
+    }
+  }
+
+  return ''
 }
 
 function Resolve-EdgesPath {
@@ -67,6 +95,7 @@ function Wait-ServerReady {
 
 Stop-OldServer
 
+$resolvedDataRoot = Resolve-DataRoot -RequestedPath $DataPath
 $resolvedEdgesPath = Resolve-EdgesPath -RequestedPath $EdgesPath
 
 $outLog = Join-Path $scriptDir 'server.stdout.log'
@@ -74,14 +103,21 @@ $errLog = Join-Path $scriptDir 'server.stderr.log'
 if(Test-Path $outLog){ Remove-Item $outLog -Force -ErrorAction SilentlyContinue }
 if(Test-Path $errLog){ Remove-Item $errLog -Force -ErrorAction SilentlyContinue }
 
-$argString = "web_topology_editor.py --host $BindHost --port $Port --edges `"$resolvedEdgesPath`""
+$dataArg = ''
+if(-not [string]::IsNullOrWhiteSpace($resolvedDataRoot)) {
+  $dataArg = " --data `"$resolvedDataRoot`""
+}
+$argString = "web_topology_editor.py --host $BindHost --port $Port$dataArg --edges `"$resolvedEdgesPath`""
 $proc = Start-Process -FilePath python -ArgumentList $argString -PassThru -WorkingDirectory $scriptDir -RedirectStandardOutput $outLog -RedirectStandardError $errLog
 
-$url = "http://$BindHost`:$Port/classic"
+$url = "http://$BindHost`:$Port/api/health"
 $ready = Wait-ServerReady -Url $url -TimeoutSec $WaitSeconds
 if($null -ne $ready){
-  Write-Output "OK: service is up -> $url"
+  Write-Output "OK: service is up -> http://$BindHost`:$Port/"
   Write-Output "PID: $($proc.Id)"
+  if(-not [string]::IsNullOrWhiteSpace($resolvedDataRoot)) {
+    Write-Output "data: $resolvedDataRoot"
+  }
   Write-Output "edges: $resolvedEdgesPath"
   exit 0
 }

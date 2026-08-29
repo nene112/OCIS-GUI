@@ -8468,6 +8468,65 @@ def list_case_dirs(base_dir: Path, cases_root: Optional[Path] = None, current_ca
     }
 
 
+def resolve_graph_case_dir(base_dir: Path, cases_root: Path, raw_case: str) -> Path:
+    raw = str(raw_case or "").strip() or "."
+    posix = raw.replace("\\", "/").strip()
+    allowed = [Path(base_dir).resolve(), Path(cases_root).resolve()]
+    cases_root_res = Path(cases_root).resolve()
+
+    def as_case_dir(path: Path) -> Optional[Path]:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            return None
+        if not resolved.exists() or not resolved.is_dir():
+            return None
+        in_allowed = False
+        for root in allowed:
+            try:
+                resolved.relative_to(root)
+                in_allowed = True
+                break
+            except Exception:
+                continue
+        if not in_allowed:
+            return None
+        if _is_case_dir(resolved):
+            return resolved
+        return None
+
+    try:
+        joined = _resolve_in_allowed_roots(base_dir, posix, allowed)
+        found = as_case_dir(joined)
+        if found is not None:
+            return found
+    except Exception:
+        pass
+
+    name = posix.rsplit("/", 1)[-1]
+    if name not in ("", ".", ".."):
+        found = as_case_dir(cases_root_res / name)
+        if found is not None:
+            return found
+        payload = list_case_dirs(base_dir, cases_root)
+        needle = name.lower()
+        for item in payload.get("cases") or []:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("name") or "").strip()
+            item_path = str(item.get("path") or "").replace("\\", "/").strip()
+            if item_name.lower() != needle and item_path != posix and not item_path.endswith("/" + name):
+                continue
+            try:
+                found = as_case_dir(_resolve_in_allowed_roots(base_dir, item_path, allowed))
+            except Exception:
+                found = None
+            if found is not None:
+                return found
+
+    raise ValueError("case out of workspace")
+
+
 def build_classic_html(base_dir: Path, cases_root: Path, edges_path: Optional[Path], startup_warning: str = "") -> str:
   current_case_dir = None
   if edges_path is not None:
@@ -9417,9 +9476,8 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/graph-case":
           query = parse_qs(parsed.query)
           raw_case = str((query.get("case") or ["."])[0]).strip() or "."
-          allowed_roots = [self.base_dir.resolve(), self.cases_root.resolve()]
           try:
-            case_dir = _resolve_in_allowed_roots(self.base_dir, raw_case, allowed_roots)
+            case_dir = resolve_graph_case_dir(self.base_dir, self.cases_root, raw_case)
           except Exception:
             self._json_response({"error": "case out of workspace"}, status=400)
             return
@@ -9876,22 +9934,47 @@ def _query_running_server(host: str, port: int, timeout: float = 0.6) -> Optiona
     return None
 
 
+def detect_default_data_root(cwd: Path, repo_root: Path) -> Optional[Path]:
+    candidates = [
+        (repo_root.parent / "ocismilpnet-mac-win" / "data"),
+        (repo_root / "data"),
+        (cwd / "data"),
+    ]
+    seen: Set[str] = set()
+    for raw in candidates:
+        try:
+            cand = raw.resolve()
+        except Exception:
+            continue
+        key = str(cand).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if cand.exists() and cand.is_dir() and _iter_case_dirs(cand):
+            return cand
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Edges 渠网拓扑建模工具")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8510, help="端口，默认 8510")
-    parser.add_argument("--data", default="", help="案例 data 目录，默认使用仓库内 data/")
+    parser.add_argument("--data", default="", help="案例 data 目录；未指定时优先使用旁边 ocismilpnet-mac-win/data，否则仓库内 data/")
     parser.add_argument("--edges", default="data/sj_zonggan-d0/mesh/edges.csv", help="edges.csv 路径")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent.resolve()
     data_root = Path(args.data).expanduser() if str(args.data or "").strip() else None
     if data_root is not None and not data_root.is_absolute():
         data_root = (Path.cwd() / data_root).resolve()
     elif data_root is not None:
         data_root = data_root.resolve()
+    else:
+        data_root = detect_default_data_root(Path.cwd(), repo_root)
     edges_path = Path(args.edges)
     startup_warning = ""
     if not edges_path.is_absolute():

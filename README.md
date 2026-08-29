@@ -95,6 +95,8 @@ From the repository root:
 python web_topology_editor/web_topology_editor.py --host 127.0.0.1 --port 8510
 ```
 
+Without `--data`, the server prefers sibling `ocismilpnet-mac-win/data` when present, otherwise repo `data/`. GraphGPU topology: `http://127.0.0.1:8510/topo`.
+
 If you prefer the helper script:
 
 ```powershell

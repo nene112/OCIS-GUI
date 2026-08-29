@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>GraphGPU &middot; WebGPU-accelerated graph visualization</title>
+  <title>OcisMILPNet · 拓扑</title>
   
   <link rel="apple-touch-icon" sizes="57x57" href="/assets/apple-icon-57x57-DjGhIxnB.png">
   <link rel="apple-touch-icon" sizes="60x60" href="/assets/apple-icon-60x60-BAf1dVuI.png">
@@ -45,7 +45,7 @@
 
     gtag('config', 'G-7G4LWPPM6P');
   </script>
-  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=type-edges-1"></script>
+  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=sticky-labels-1"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
   <style>
     .node-ctx-menu{
@@ -87,13 +87,54 @@
       background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-dim);
       pointer-events:none;box-shadow:var(--shadow);display:none;
     }
+    .fallback.visible{top:42px}
+    .toolbar .btn,.toolbar .sep{flex-shrink:0}
+    .toolbar .ocis-brand{
+      position:relative;z-index:21;height:100%;min-width:0;max-width:none;
+      padding:0 4px 0 0;margin-right:8px;display:flex;align-items:center;gap:7px;
+      border:none;background:transparent;cursor:pointer;flex:0 1 auto;
+      font-family:Fira Code,monospace;font-size:13px;font-weight:500;
+      color:var(--text);letter-spacing:-.3px;
+    }
+    .toolbar .ocis-brand:hover,.toolbar .ocis-brand[aria-expanded="true"]{color:var(--accent)}
+    .toolbar .ocis-brand .dot{
+      width:9px;height:9px;border-radius:50%;flex:none;
+      background:var(--brand);box-shadow:0 0 6px var(--brand);
+    }
+    .toolbar .ocis-brand #ocisBrandLabel{
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+    }
+    .toolbar .ocis-brand i{font-size:12px;opacity:.7;flex:none}
+    .ocis-case-menu{
+      position:fixed;top:42px;left:8px;z-index:10001;min-width:220px;max-width:min(90vw,420px);
+      max-height:min(70vh,420px);overflow:auto;padding:6px;
+      background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;
+      box-shadow:var(--shadow);display:none;
+    }
+    .ocis-case-menu.open{display:block}
+    .ocis-case-menu .case-menu-title{
+      font-size:11px;color:var(--text-muted);padding:4px 8px 6px;
+    }
+    .ocis-case-menu button{
+      display:block;width:100%;text-align:left;border:none;border-radius:6px;
+      background:transparent;color:var(--text);cursor:pointer;
+      font-family:"Source Sans 3",Source Sans Pro,sans-serif;font-size:12px;
+      padding:7px 8px;
+    }
+    .ocis-case-menu button:hover{background:var(--accent-soft);color:var(--accent)}
+    .ocis-case-menu button.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+    .ocis-case-menu .case-menu-empty{font-size:12px;color:var(--text-dim);padding:8px}
   </style>
 </head>
 <body>
   <div id="app">
     <!-- TOOLBAR -->
     <div class="toolbar" :class="{ light: !darkMode }">
-      <div class="brand"><span class="dot"></span> GraphGPU</div>
+      <button type="button" id="ocisBrand" class="ocis-brand" aria-haspopup="listbox" aria-expanded="false" title="选择案例">
+        <span class="dot"></span>
+        <span id="ocisBrandLabel">OcisMILPNet</span>
+        <i class="ph-caret-down-bold"></i>
+      </button>
       <div class="sep"></div>
       <button class="btn" :class="{ active: layoutRunning }" @click="toggleLayout">
         <i :class="layoutRunning ? 'ph-pause-bold' : 'ph-play-bold'"></i>
@@ -427,6 +468,183 @@
     <div class="ctx-title" id="node-context-title">节点</div>
     <button type="button" data-act="connect"><i class="ph-arrow-right-bold"></i> 连接</button>
   </div>
+  <div id="ocisCaseMenu" class="ocis-case-menu" role="listbox"></div>
+
+  <script>
+  (function setupCasePicker() {
+    const DEFAULT_LABEL = "OcisMILPNet";
+    const menu = document.getElementById("ocisCaseMenu");
+    let cases = [];
+    let loaded = false;
+    let observing = false;
+    let fitting = false;
+
+    function brandEl() {
+      return document.getElementById("ocisBrand");
+    }
+
+    function labelEl() {
+      return document.getElementById("ocisBrandLabel");
+    }
+
+    function currentCaseName() {
+      const q = new URLSearchParams(window.location.search).get("data");
+      return (q && q.trim()) || "";
+    }
+
+    function fitBrand() {
+      const toolbar = document.querySelector(".toolbar");
+      const brand = brandEl();
+      if (!toolbar || !brand || fitting) return;
+      fitting = true;
+      brand.style.flex = "0 0 0px";
+      brand.style.maxWidth = "0px";
+      brand.style.minWidth = "0px";
+      void toolbar.offsetWidth;
+      const spacer = toolbar.querySelector(".spacer");
+      const room = spacer ? spacer.getBoundingClientRect().width : toolbar.clientWidth;
+      brand.style.flex = "0 1 auto";
+      brand.style.minWidth = "";
+      brand.style.maxWidth = Math.max(88, Math.floor(room)) + "px";
+      fitting = false;
+    }
+
+    function positionMenu() {
+      const brand = brandEl();
+      if (!brand || !menu) return;
+      const rect = brand.getBoundingClientRect();
+      const width = Math.max(220, Math.min(rect.width, 420));
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+      menu.style.left = left + "px";
+      menu.style.top = rect.bottom + "px";
+      menu.style.minWidth = width + "px";
+    }
+
+    function setLabel(name) {
+      const text = name || DEFAULT_LABEL;
+      const el = labelEl();
+      if (el) el.textContent = text;
+      document.title = text + " · 拓扑";
+      requestAnimationFrame(fitBrand);
+    }
+
+    function closeMenu() {
+      if (!menu) return;
+      menu.classList.remove("open");
+      const brand = brandEl();
+      if (brand) brand.setAttribute("aria-expanded", "false");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderMenu() {
+      const current = currentCaseName();
+      if (!cases.length) {
+        menu.innerHTML = '<div class="case-menu-title">案例</div><div class="case-menu-empty">data 目录下没有可用案例</div>';
+        return;
+      }
+      const items = cases.map((item) => {
+        const name = String(item.name || item.path || "").trim();
+        const active = name === current ? " active" : "";
+        return '<button type="button" role="option" data-name="' + escapeHtml(name) +
+          '" class="' + active.trim() + '">' + escapeHtml(name) + "</button>";
+      }).join("");
+      menu.innerHTML = '<div class="case-menu-title">选择案例</div>' + items;
+    }
+
+    async function ensureCases() {
+      if (loaded) return;
+      try {
+        const resp = await fetch("/api/cases?_=" + Date.now(), { cache: "no-store" });
+        const data = await resp.json();
+        cases = Array.isArray(data.cases) ? data.cases : [];
+      } catch (err) {
+        console.warn("load cases failed", err);
+        cases = [];
+      }
+      loaded = true;
+    }
+
+    async function openMenu() {
+      await ensureCases();
+      renderMenu();
+      positionMenu();
+      menu.classList.add("open");
+      const brand = brandEl();
+      if (brand) brand.setAttribute("aria-expanded", "true");
+    }
+
+    function selectCase(name) {
+      const next = String(name || "").trim();
+      closeMenu();
+      if (!next || next === currentCaseName()) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("data", next);
+      window.location.assign(url.toString());
+    }
+
+    function boot() {
+      setLabel(currentCaseName());
+      requestAnimationFrame(() => {
+        fitBrand();
+        requestAnimationFrame(fitBrand);
+      });
+      if (observing) return;
+      const toolbar = document.querySelector(".toolbar");
+      if (toolbar && window.ResizeObserver) {
+        observing = true;
+        const ro = new ResizeObserver(() => {
+          if (!fitting) fitBrand();
+        });
+        ro.observe(toolbar);
+        window.addEventListener("resize", fitBrand);
+      }
+    }
+
+    document.addEventListener("click", (ev) => {
+      const brand = ev.target.closest && ev.target.closest("#ocisBrand");
+      if (brand) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (menu.classList.contains("open")) closeMenu();
+        else openMenu();
+        return;
+      }
+    });
+    menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    menu.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button[data-name]");
+      if (!btn) return;
+      ev.preventDefault();
+      selectCase(btn.getAttribute("data-name"));
+    });
+    document.addEventListener("mousedown", (ev) => {
+      if (!menu.classList.contains("open")) return;
+      if (ev.target.closest && (ev.target.closest("#ocisCaseMenu") || ev.target.closest("#ocisBrand"))) return;
+      closeMenu();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeMenu();
+    });
+
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (document.querySelector(".toolbar #ocisBrand")) {
+        clearInterval(timer);
+        boot();
+      } else if (Date.now() - started > 8000) {
+        clearInterval(timer);
+        boot();
+      }
+    }, 40);
+  })();
+  </script>
 
   <script>
   (function () {
@@ -685,11 +903,17 @@
         }
         const graph = g.getGraph();
         const related = typeof g.related === "function" ? g.related(id) : [];
+        const sourceName = String((node.properties && node.properties.source) || "").trim();
         reachDrag.active = true;
         reachDrag.leaderId = id;
         reachDrag.origin = { x: graph.positions[id * 2], y: graph.positions[id * 2 + 1] };
         reachDrag.followers = (related || [])
           .filter((n) => n && n.id !== id)
+          .filter((n) => {
+            if (!sourceName) return true;
+            const name = String((n.properties && (n.properties.name || n.properties.title)) || "").trim();
+            return name !== sourceName;
+          })
           .map((n) => ({
             id: n.id,
             x: graph.positions[n.id * 2],
