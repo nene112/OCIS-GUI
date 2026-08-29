@@ -45,8 +45,46 @@
 
     gtag('config', 'G-7G4LWPPM6P');
   </script>
-  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=zoom-sens-1"></script>
+  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=connect-1"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
+  <style>
+    .node-ctx-menu{
+      position:fixed;z-index:40;min-width:148px;padding:6px;
+      background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;
+      box-shadow:var(--shadow);display:none;
+    }
+    .node-ctx-menu.open{display:block}
+    .node-ctx-menu .ctx-title{
+      font-size:11px;color:var(--text-muted);padding:4px 8px 6px;max-width:220px;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    }
+    .node-ctx-menu button{
+      display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+      font-family:"Source Sans 3",Source Sans Pro,sans-serif;font-size:12px;font-weight:500;
+      padding:7px 8px;border:none;border-radius:6px;background:transparent;
+      color:var(--text);cursor:pointer;
+    }
+    .node-ctx-menu button:hover{background:var(--accent-soft);color:var(--accent)}
+    .connect-overlay{
+      position:fixed;top:42px;left:0;right:0;bottom:34px;z-index:18;
+      display:none;pointer-events:none;
+    }
+    .connect-overlay.is-connecting{display:block;pointer-events:auto;cursor:crosshair}
+    .connect-overlay svg{
+      position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible;
+    }
+    .connect-overlay line{stroke:#60a5fa;stroke-width:2.5;stroke-linecap:round}
+    .connect-overlay.snap line{stroke:#34a853}
+    .connect-overlay.snap #ocis-connect-arrow-path{fill:#34a853}
+    .connect-overlay #connect-cursor{fill:#60a5fa;stroke:#fff;stroke-width:1.5}
+    .connect-overlay.snap #connect-cursor{fill:#34a853}
+    #connect-hint{
+      position:fixed;left:50%;bottom:46px;transform:translateX(-50%);z-index:17;
+      font-size:12px;padding:5px 10px;border-radius:6px;white-space:nowrap;
+      background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-dim);
+      pointer-events:none;box-shadow:var(--shadow);display:none;
+    }
+  </style>
 </head>
 <body>
   <div id="app">
@@ -60,6 +98,7 @@
       </button>
       <button class="btn" @click="fitView"><i class="ph-arrows-out-bold"></i> fit</button>
       <button class="btn" @click="resetGraph"><i class="ph-arrow-counter-clockwise-bold"></i> reset</button>
+      <button class="btn" @click="showAddModal"><i class="ph-plus-bold"></i> add</button>
       <div class="sep"></div>
       <button class="btn" :class="{ active: animatedEnabled }" @click="toggleAnimated">
         <i class="ph-atom-bold"></i> animated
@@ -83,6 +122,8 @@
     <!-- CONTEXT PANEL -->
     <div class="context-panel" :class="{ hidden: !hasSelection }">
       <div class="ctx-btn green" title="Edit node" @click="showEditModal"><i class="ph-pencil-fill"></i></div>
+      <div class="ctx-btn" title="Add connected node" @click="showAddModal"><i class="ph-plus-bold"></i></div>
+      <div class="ctx-btn" title="Connect nodes" id="btnConnectFromPanel"><i class="ph-arrow-right-bold"></i></div>
       <div class="ctx-btn" title="Fit to view" @click="fitView"><i class="ph-arrows-out-fill"></i></div>
       <div class="ctx-sep"></div>
       <div class="ctx-btn red" title="Delete node" @click="deleteSelected"><i class="ph-trash-fill"></i></div>
@@ -143,6 +184,45 @@
       <div class="tt-tag" :style="{ color: tooltipColor }">{{ tooltipTag }}</div>
       <div class="tt-name">{{ tooltipName }}</div>
       <div class="tt-props" v-if="tooltipProps">{{ tooltipProps }}</div>
+    </div>
+
+    <!-- ADD NODE MODAL -->
+    <div class="modal-overlay" v-if="addModal.open" @click.self="addModal.open = false">
+      <div class="modal-card" :class="{ light: !darkMode }">
+        <div class="modal-head">
+          <span>Add Node</span>
+          <button class="close" @click="addModal.open = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="field-row">
+            <label>Name</label>
+            <input v-model="addModal.name" />
+          </div>
+          <div class="field-row">
+            <label>Type</label>
+            <input v-model="addModal.type" placeholder="0" />
+          </div>
+          <div class="field-row">
+            <label>Connect to selected</label>
+            <select v-model="addModal.linkMode" :disabled="!hasSelection">
+              <option value="connect">Yes</option>
+              <option value="isolated">No (isolated)</option>
+            </select>
+          </div>
+          <div class="field-row" v-if="addModal.linkMode === 'connect'">
+            <label>Connection</label>
+            <select v-model="addModal.connectionType">
+              <option value="indirect">indirect</option>
+              <option value="direct">direct</option>
+            </select>
+          </div>
+          <p class="confirm-text" v-if="addModal.hint">{{ addModal.hint }}</p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-cancel" @click="addModal.open = false">Cancel</button>
+          <button class="btn-save" @click="confirmAdd">Add</button>
+        </div>
+      </div>
     </div>
 
     <!-- EDIT MODAL -->
@@ -327,6 +407,307 @@
     <h2>WebGPU Not Available</h2>
     <p>This demo requires WebGPU. Try <strong>Chrome 113+</strong>, <strong>Edge 113+</strong>, or <strong>Safari 18+</strong>.</p>
   </div>
+
+  <div id="node-context-menu" class="node-ctx-menu">
+    <div class="ctx-title" id="node-context-title">节点</div>
+    <button type="button" data-act="connect"><i class="ph-arrow-right-bold"></i> 连接</button>
+  </div>
+  <div id="connect-overlay" class="connect-overlay">
+    <svg id="connect-svg" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ocis-connect-arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+          <path id="ocis-connect-arrow-path" d="M0,0 L10,4 L0,8 z" fill="#60a5fa"></path>
+        </marker>
+      </defs>
+      <line id="connect-line" x1="0" y1="0" x2="0" y2="0" marker-end="url(#ocis-connect-arrow)"></line>
+      <circle id="connect-cursor" r="4.5" cx="0" cy="0"></circle>
+    </svg>
+  </div>
+  <div id="connect-hint">点击目标节点完成连接 · Esc 取消 · Shift 为 direct</div>
+
+  <script>
+  (function () {
+    const menu = document.getElementById("node-context-menu");
+    const titleEl = document.getElementById("node-context-title");
+    const overlay = document.getElementById("connect-overlay");
+    const line = document.getElementById("connect-line");
+    const cursor = document.getElementById("connect-cursor");
+    const hint = document.getElementById("connect-hint");
+    const state = {
+      sourceId: null,
+      connecting: false,
+      hoverId: null,
+      menuNodeId: null,
+      raf: 0,
+      pointer: null,
+      armedAt: 0
+    };
+
+    function canvasEl() {
+      return document.getElementById("graph-canvas");
+    }
+
+    function nodeName(node) {
+      if (!node) return "";
+      const props = node.properties || {};
+      return String(props.name || props.title || node.tag || node.id);
+    }
+
+    function canvasCoords(clientX, clientY) {
+      const canvas = canvasEl();
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      return [(clientX - rect.left) * dpr, (clientY - rect.top) * dpr];
+    }
+
+    function overlayPoint(clientX, clientY) {
+      const rect = overlay.getBoundingClientRect();
+      return [clientX - rect.left, clientY - rect.top];
+    }
+
+    function worldToOverlay(wx, wy) {
+      const g = window.g;
+      const canvas = canvasEl();
+      const [sx, sy] = g.camera.worldToScreen(wx, wy);
+      const dpr = window.devicePixelRatio || 1;
+      const canvasRect = canvas.getBoundingClientRect();
+      const overlayRect = overlay.getBoundingClientRect();
+      return [
+        canvasRect.left + sx / dpr - overlayRect.left,
+        canvasRect.top + sy / dpr - overlayRect.top
+      ];
+    }
+
+    function hitNodeAt(clientX, clientY) {
+      const g = window.g;
+      if (!g || !g.controls) return null;
+      const [x, y] = canvasCoords(clientX, clientY);
+      const id = g.controls.hitTest(x, y);
+      return id === null || id === undefined ? null : id;
+    }
+
+    function hideMenu() {
+      menu.classList.remove("open");
+    }
+
+    function placeMenu(clientX, clientY) {
+      menu.classList.add("open");
+      const pad = 8;
+      const mw = menu.offsetWidth || 148;
+      const mh = menu.offsetHeight || 72;
+      let left = clientX + 6;
+      let top = clientY + 6;
+      if (left + mw > window.innerWidth - pad) left = clientX - mw - 6;
+      if (top + mh > window.innerHeight - pad) top = clientY - mh - 6;
+      menu.style.left = Math.max(pad, left) + "px";
+      menu.style.top = Math.max(pad, top) + "px";
+    }
+
+    function selectNode(id) {
+      const g = window.g;
+      const node = g.getGraph().getNode(id);
+      if (!node) return;
+      const prev = g.controls.getSelectedNodes();
+      prev.forEach((oldId) => {
+        if (oldId !== id) {
+          g.renderer && g.renderer.setSelection(oldId, false);
+          g.controls.emit("node:deselect", g.getGraph().getNode(oldId));
+        }
+      });
+      g.controls.selectedNodes.clear();
+      g.controls.selectedNodes.add(id);
+      g.renderer && g.renderer.setSelection(id, true);
+      g.controls.emit("node:select", node);
+    }
+
+    function alreadyLinked(src, tgt) {
+      const edges = window.g.edges(src) || [];
+      return edges.some((edge) => edge.source === tgt || edge.target === tgt);
+    }
+
+    function stopConnect() {
+      const g = window.g;
+      if (state.sourceId !== null && g && g.unpinNode) g.unpinNode(state.sourceId);
+      state.connecting = false;
+      state.sourceId = null;
+      state.hoverId = null;
+      state.pointer = null;
+      state.armedAt = 0;
+      overlay.classList.remove("is-connecting", "snap");
+      hint.style.display = "none";
+      if (state.raf) {
+        cancelAnimationFrame(state.raf);
+        state.raf = 0;
+      }
+    }
+
+    function updateArrow() {
+      if (!state.connecting || state.sourceId === null || !window.g) {
+        state.raf = 0;
+        return;
+      }
+      const node = window.g.getGraph().getNode(state.sourceId);
+      if (node) {
+        const [x1, y1] = worldToOverlay(node.x, node.y);
+        let x2 = x1;
+        let y2 = y1;
+        if (state.hoverId !== null && state.hoverId !== state.sourceId) {
+          const tgt = window.g.getGraph().getNode(state.hoverId);
+          if (tgt) {
+            const p = worldToOverlay(tgt.x, tgt.y);
+            x2 = p[0];
+            y2 = p[1];
+          }
+        } else if (state.pointer) {
+          const p = overlayPoint(state.pointer.x, state.pointer.y);
+          x2 = p[0];
+          y2 = p[1];
+        }
+        line.setAttribute("x1", x1);
+        line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2);
+        line.setAttribute("y2", y2);
+        cursor.setAttribute("cx", x2);
+        cursor.setAttribute("cy", y2);
+        overlay.classList.toggle("snap", state.hoverId !== null && state.hoverId !== state.sourceId);
+      }
+      state.raf = requestAnimationFrame(updateArrow);
+    }
+
+    function startConnect(id, ev) {
+      const g = window.g;
+      if (!g || id === null || id === undefined) return;
+      hideMenu();
+      state.connecting = true;
+      state.sourceId = id;
+      state.hoverId = null;
+      state.pointer = ev ? { x: ev.clientX, y: ev.clientY } : null;
+      state.armedAt = Date.now() + 160;
+      overlay.classList.add("is-connecting");
+      hint.style.display = "block";
+      if (g.pinNode) g.pinNode(id);
+      if (!state.raf) state.raf = requestAnimationFrame(updateArrow);
+    }
+
+    function finishConnect(targetId, shiftKey) {
+      const g = window.g;
+      const src = state.sourceId;
+      if (src === null || targetId === null || targetId === src) {
+        stopConnect();
+        return;
+      }
+      if (alreadyLinked(src, targetId)) {
+        stopConnect();
+        return;
+      }
+      const srcNode = g.getGraph().getNode(src);
+      const tgtNode = g.getGraph().getNode(targetId);
+      const conn = shiftKey ? "direct" : "indirect";
+      const type = srcNode && srcNode.properties && srcNode.properties.type != null
+        ? String(srcNode.properties.type)
+        : "0";
+      g.link(src, conn, targetId, {
+        source: nodeName(srcNode),
+        target: nodeName(tgtNode),
+        end: "",
+        ConnectionType: conn,
+        type,
+        stake: "",
+        canal: "",
+        id: "",
+        maxFlow: "0",
+        minFlow: "0",
+        Flow_ic: "0"
+      });
+      if (typeof window.refreshGraphStats === "function") window.refreshGraphStats();
+      stopConnect();
+      selectNode(targetId);
+    }
+
+    function onCanvasContextMenu(ev) {
+      if (!window.g) return;
+      ev.preventDefault();
+      if (state.connecting) {
+        stopConnect();
+        return;
+      }
+      const id = hitNodeAt(ev.clientX, ev.clientY);
+      if (id === null) {
+        hideMenu();
+        state.menuNodeId = null;
+        return;
+      }
+      state.menuNodeId = id;
+      titleEl.textContent = nodeName(window.g.getGraph().getNode(id)) || ("节点 " + id);
+      selectNode(id);
+      placeMenu(ev.clientX, ev.clientY);
+    }
+
+    function boot() {
+      const canvas = canvasEl();
+      if (!canvas) return;
+
+      canvas.addEventListener("contextmenu", onCanvasContextMenu);
+      overlay.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        stopConnect();
+      });
+
+      menu.addEventListener("contextmenu", (ev) => ev.preventDefault());
+      menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
+      menu.querySelector('[data-act="connect"]').addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        startConnect(state.menuNodeId, ev);
+      });
+
+      const panelBtn = document.getElementById("btnConnectFromPanel");
+      if (panelBtn) {
+        panelBtn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const ids = window.g && window.g.controls ? [...window.g.controls.getSelectedNodes()] : [];
+          if (ids.length) startConnect(ids[0], ev);
+        });
+      }
+
+      window.addEventListener("pointermove", (ev) => {
+        if (!state.connecting) return;
+        state.pointer = { x: ev.clientX, y: ev.clientY };
+        state.hoverId = hitNodeAt(ev.clientX, ev.clientY);
+      });
+      overlay.addEventListener("pointerup", (ev) => {
+        if (!state.connecting || ev.button !== 0) return;
+        if (Date.now() < state.armedAt) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        finishConnect(hitNodeAt(ev.clientX, ev.clientY), ev.shiftKey);
+      });
+
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape") {
+          hideMenu();
+          stopConnect();
+        }
+      });
+      document.addEventListener("mousedown", (ev) => {
+        if (!menu.classList.contains("open")) return;
+        if (ev.target.closest && ev.target.closest("#node-context-menu")) return;
+        hideMenu();
+      });
+    }
+
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (window.g) {
+        clearInterval(timer);
+        boot();
+      } else if (Date.now() - started > 20000) {
+        clearInterval(timer);
+      }
+    }, 40);
+  })();
+  </script>
 
 </body>
 </html>
