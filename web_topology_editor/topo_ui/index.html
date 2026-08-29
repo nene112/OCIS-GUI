@@ -45,7 +45,7 @@
 
     gtag('config', 'G-7G4LWPPM6P');
   </script>
-  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=connect-1"></script>
+  <script type="module" crossorigin src="/assets/index-DfKgsFba.js?v=type-edges-1"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
   <style>
     .node-ctx-menu{
@@ -653,6 +653,68 @@
     function boot() {
       const canvas = canvasEl();
       if (!canvas) return;
+      const g = window.g;
+      const reachDrag = { active: false, leaderId: null, origin: null, followers: [] };
+
+      function isReachNode(node) {
+        return !!(node && (node.tag === "渠段" || (node.properties && node.properties.kind === "渠段")));
+      }
+
+      function clearReachDrag() {
+        if (!reachDrag.active) return;
+        if (g && g.unpinNode) {
+          reachDrag.followers.forEach((f) => g.unpinNode(f.id));
+        }
+        reachDrag.active = false;
+        reachDrag.leaderId = null;
+        reachDrag.origin = null;
+        reachDrag.followers = [];
+      }
+
+      canvas.addEventListener("mousedown", (ev) => {
+        if (ev.button !== 0 || !g) return;
+        const id = hitNodeAt(ev.clientX, ev.clientY);
+        if (id === null) {
+          clearReachDrag();
+          return;
+        }
+        const node = g.getGraph().getNode(id);
+        if (!isReachNode(node)) {
+          clearReachDrag();
+          return;
+        }
+        const graph = g.getGraph();
+        const related = typeof g.related === "function" ? g.related(id) : [];
+        reachDrag.active = true;
+        reachDrag.leaderId = id;
+        reachDrag.origin = { x: graph.positions[id * 2], y: graph.positions[id * 2 + 1] };
+        reachDrag.followers = (related || [])
+          .filter((n) => n && n.id !== id)
+          .map((n) => ({
+            id: n.id,
+            x: graph.positions[n.id * 2],
+            y: graph.positions[n.id * 2 + 1]
+          }));
+        if (g.pinNode) {
+          reachDrag.followers.forEach((f) => g.pinNode(f.id));
+        }
+      }, true);
+
+      g.on("node:drag", (ev) => {
+        if (!reachDrag.active) return;
+        const node = ev && ev.target;
+        if (!node || node.id !== reachDrag.leaderId) return;
+        const graph = g.getGraph();
+        const dx = graph.positions[node.id * 2] - reachDrag.origin.x;
+        const dy = graph.positions[node.id * 2 + 1] - reachDrag.origin.y;
+        for (let i = 0; i < reachDrag.followers.length; i++) {
+          const f = reachDrag.followers[i];
+          graph.setNodePosition(f.id, f.x + dx, f.y + dy);
+        }
+      });
+      g.on("node:dragend", () => {
+        clearReachDrag();
+      });
 
       canvas.addEventListener("contextmenu", onCanvasContextMenu);
       overlay.addEventListener("contextmenu", (ev) => {
