@@ -49,11 +49,14 @@
   <link rel="stylesheet" crossorigin href="/assets/index-Dmc-6OaB.css">
   <style>
     .node-ctx-menu{
-      position:fixed;z-index:40;min-width:148px;padding:6px;
+      position:fixed;z-index:10000;min-width:148px;padding:6px;
       background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;
-      box-shadow:var(--shadow);display:none;
+      box-shadow:var(--shadow);display:none;pointer-events:auto;
+      transform:translateZ(0);isolation:isolate;
     }
     .node-ctx-menu.open{display:block}
+    body.ctx-menu-open .tooltip{opacity:0 !important;visibility:hidden !important;}
+    body.ctx-menu-open .context-panel{z-index:14;}
     .node-ctx-menu .ctx-title{
       font-size:11px;color:var(--text-muted);padding:4px 8px 6px;max-width:220px;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -408,10 +411,6 @@
     <p>This demo requires WebGPU. Try <strong>Chrome 113+</strong>, <strong>Edge 113+</strong>, or <strong>Safari 18+</strong>.</p>
   </div>
 
-  <div id="node-context-menu" class="node-ctx-menu">
-    <div class="ctx-title" id="node-context-title">节点</div>
-    <button type="button" data-act="connect"><i class="ph-arrow-right-bold"></i> 连接</button>
-  </div>
   <div id="connect-overlay" class="connect-overlay">
     <svg id="connect-svg" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -424,6 +423,10 @@
     </svg>
   </div>
   <div id="connect-hint">点击目标节点完成连接 · Esc 取消 · Shift 为 direct</div>
+  <div id="node-context-menu" class="node-ctx-menu">
+    <div class="ctx-title" id="node-context-title">节点</div>
+    <button type="button" data-act="connect"><i class="ph-arrow-right-bold"></i> 连接</button>
+  </div>
 
   <script>
   (function () {
@@ -488,10 +491,14 @@
 
     function hideMenu() {
       menu.classList.remove("open");
+      document.body.classList.remove("ctx-menu-open");
     }
 
     function placeMenu(clientX, clientY) {
+      document.body.appendChild(menu);
       menu.classList.add("open");
+      document.body.classList.add("ctx-menu-open");
+      menu.style.zIndex = "10000";
       const pad = 8;
       const mw = menu.offsetWidth || 148;
       const mh = menu.offsetHeight || 72;
