@@ -10,6 +10,10 @@ assert _SPEC.loader is not None
 _SPEC.loader.exec_module(_MOD)
 resolve_graph_case_dir = _MOD.resolve_graph_case_dir
 detect_default_data_root = _MOD.detect_default_data_root
+sanitize_layout_name = _MOD.sanitize_layout_name
+save_graph_layout = _MOD.save_graph_layout
+list_graph_layouts = _MOD.list_graph_layouts
+load_graph_layout = _MOD.load_graph_layout
 
 
 def _write_case(root: Path, name: str) -> Path:
@@ -54,6 +58,29 @@ class DetectDefaultDataRootTest(unittest.TestCase):
             _write_case(repo_data, "ph")
             found = detect_default_data_root(repo, repo)
             self.assertEqual(found, sibling.resolve())
+
+
+class GraphLayoutStoreTest(unittest.TestCase):
+    def test_sanitize_rejects_empty_and_path_chars(self):
+        self.assertEqual(sanitize_layout_name("  布局 A  "), "布局 A")
+        with self.assertRaises(ValueError):
+            sanitize_layout_name("  ")
+        self.assertEqual(sanitize_layout_name("a/b"), "ab")
+
+    def test_save_list_and_load_roundtrip(self):
+        with tempfile.TemporaryDirectory() as raw:
+            case_dir = _write_case(Path(raw), "demo")
+            saved = save_graph_layout(
+                case_dir,
+                {"name": "主渠", "positions": {"闸1": {"x": 1.5, "y": -0.25}}, "camera": {"x": 0, "y": 0, "zoom": 2}},
+            )
+            self.assertTrue(saved["ok"])
+            listed = list_graph_layouts(case_dir)
+            self.assertEqual(len(listed), 1)
+            self.assertEqual(listed[0]["name"], "主渠")
+            loaded = load_graph_layout(case_dir, "主渠")
+            self.assertEqual(loaded["positions"]["闸1"]["x"], 1.5)
+            self.assertEqual(loaded["camera"]["zoom"], 2)
 
 
 if __name__ == "__main__":

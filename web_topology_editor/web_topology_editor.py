@@ -8527,6 +8527,106 @@ def resolve_graph_case_dir(base_dir: Path, cases_root: Path, raw_case: str) -> P
     raise ValueError("case out of workspace")
 
 
+def sanitize_layout_name(raw: object) -> str:
+    text = str(raw or "").strip()
+    cleaned = []
+    for ch in text:
+        if ch in '<>:"/\\|?*' or ord(ch) < 32:
+            continue
+        cleaned.append(ch)
+    name = "".join(cleaned).strip(" .")
+    if not name:
+        raise ValueError("invalid layout name")
+    return name[:80]
+
+
+def case_layouts_dir(case_dir: Path) -> Path:
+    mesh = case_dir / "mesh"
+    if mesh.is_dir():
+        return mesh / "layouts"
+    return case_dir / "layouts"
+
+
+def layout_file_path(case_dir: Path, name: str) -> Path:
+    return case_layouts_dir(case_dir) / f"{sanitize_layout_name(name)}.json"
+
+
+def list_graph_layouts(case_dir: Path) -> List[Dict[str, object]]:
+    folder = case_layouts_dir(case_dir)
+    if not folder.is_dir():
+        return []
+    items: List[Dict[str, object]] = []
+    for path in sorted(folder.glob("*.json")):
+        data: Dict[str, object] = {}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            data = {}
+        positions = data.get("positions") if isinstance(data.get("positions"), dict) else {}
+        items.append(
+            {
+                "name": str(data.get("name") or path.stem),
+                "savedAt": str(data.get("savedAt") or ""),
+                "nodeCount": len(positions),
+            }
+        )
+    return items
+
+
+def load_graph_layout(case_dir: Path, name: str) -> Dict[str, object]:
+    path = layout_file_path(case_dir, name)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(name)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("invalid layout file")
+    return data
+
+
+def save_graph_layout(case_dir: Path, payload: Dict[str, object]) -> Dict[str, object]:
+    name = sanitize_layout_name(payload.get("name"))
+    raw_positions = payload.get("positions")
+    if not isinstance(raw_positions, dict):
+        raise ValueError("positions required")
+    clean_pos: Dict[str, Dict[str, float]] = {}
+    for key, pt in raw_positions.items():
+        node = str(key or "").strip()
+        if not node or not isinstance(pt, dict):
+            continue
+        try:
+            x = float(pt.get("x"))
+            y = float(pt.get("y"))
+        except Exception:
+            continue
+        if not math.isfinite(x) or not math.isfinite(y):
+            continue
+        clean_pos[node] = {"x": x, "y": y}
+    if not clean_pos:
+        raise ValueError("no valid positions")
+    camera = payload.get("camera") if isinstance(payload.get("camera"), dict) else None
+    folder = case_layouts_dir(case_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    out = {
+        "name": name,
+        "savedAt": datetime.now().isoformat(timespec="seconds"),
+        "positions": clean_pos,
+        "camera": camera,
+    }
+    path = folder / f"{name}.json"
+    path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "name": name, "nodeCount": len(clean_pos)}
+
+
+def delete_graph_layout(case_dir: Path, name: str) -> Dict[str, object]:
+    safe = sanitize_layout_name(name)
+    path = layout_file_path(case_dir, safe)
+    if path.exists():
+        path.unlink()
+    return {"ok": True, "name": safe}
+
+
 def build_classic_html(base_dir: Path, cases_root: Path, edges_path: Optional[Path], startup_warning: str = "") -> str:
   current_case_dir = None
   if edges_path is not None:
@@ -9495,6 +9595,27 @@ class AppHandler(BaseHTTPRequestHandler):
           self._json_response(graph)
           return
 
+        if parsed.path == "/api/graph-layouts":
+          query = parse_qs(parsed.query)
+          raw_case = str((query.get("case") or ["."])[0]).strip() or "."
+          try:
+            case_dir = resolve_graph_case_dir(self.base_dir, self.cases_root, raw_case)
+          except Exception:
+            self._json_response({"error": "case out of workspace"}, status=400)
+            return
+          raw_name = str((query.get("name") or [""])[0]).strip()
+          try:
+            if raw_name:
+              layout = load_graph_layout(case_dir, raw_name)
+              self._json_response(layout)
+            else:
+              self._json_response({"case": case_dir.name, "layouts": list_graph_layouts(case_dir)})
+          except FileNotFoundError:
+            self._json_response({"error": f"layout not found: {raw_name}"}, status=404)
+          except Exception as exc:
+            self._json_response({"error": str(exc)}, status=400)
+          return
+
         if parsed.path == "/api/graph-file":
           query = parse_qs(parsed.query)
           raw_path = str((query.get("path") or [""])[0]).strip()
@@ -9641,6 +9762,33 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/graph-layouts":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except Exception:
+                self._json_response({"error": "invalid json"}, status=400)
+                return
+            if not isinstance(payload, dict):
+                self._json_response({"error": "payload must be object"}, status=400)
+                return
+            raw_case = str(payload.get("case") or "").strip() or "."
+            try:
+                case_dir = resolve_graph_case_dir(self.base_dir, self.cases_root, raw_case)
+            except Exception:
+                self._json_response({"error": "case out of workspace"}, status=400)
+                return
+            action = str(payload.get("action") or "save").strip().lower()
+            try:
+                if action == "delete":
+                    self._json_response(delete_graph_layout(case_dir, str(payload.get("name") or "")))
+                else:
+                    self._json_response(save_graph_layout(case_dir, payload))
+            except Exception as exc:
+                self._json_response({"error": str(exc)}, status=400)
+            return
+
         if parsed.path == "/api/analyze-config":
           length = int(self.headers.get("Content-Length", "0"))
           raw = self.rfile.read(length)

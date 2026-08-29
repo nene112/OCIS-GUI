@@ -124,6 +124,30 @@
     .ocis-case-menu button:hover{background:var(--accent-soft);color:var(--accent)}
     .ocis-case-menu button.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
     .ocis-case-menu .case-menu-empty{font-size:12px;color:var(--text-dim);padding:8px}
+    .toolbar .ocis-layout{
+      flex:0 1 148px;max-width:168px;margin-right:8px;padding:0 4px;
+    }
+    .toolbar .ocis-layout i.ph-map-pin-bold{font-size:14px;opacity:.9;color:var(--accent)}
+    .ocis-layout-save{
+      display:flex;gap:6px;padding:4px 4px 8px;align-items:center;
+    }
+    .ocis-layout-save input{
+      flex:1;min-width:0;height:28px;padding:0 8px;border-radius:6px;
+      border:1px solid var(--border);background:var(--bg-surface);color:var(--text);
+      font-family:"Source Sans 3",Source Sans Pro,sans-serif;font-size:12px;
+    }
+    .ocis-layout-save button[data-act="save"]{
+      width:auto;flex:none;padding:6px 10px;background:var(--accent-soft);color:var(--accent);font-weight:600;
+    }
+    .ocis-layout-item{
+      display:flex;align-items:center;gap:4px;
+    }
+    .ocis-layout-item button[data-name]{flex:1;min-width:0}
+    .ocis-layout-item button[data-del]{
+      width:28px;flex:none;padding:7px 0;text-align:center;color:var(--text-muted);
+    }
+    .ocis-layout-item button[data-del]:hover{color:#e85d4c;background:transparent}
+    .ocis-layout-hint{font-size:11px;color:var(--text-dim);padding:2px 8px 6px}
   </style>
 </head>
 <body>
@@ -133,6 +157,11 @@
       <button type="button" id="ocisBrand" class="ocis-brand" aria-haspopup="listbox" aria-expanded="false" title="选择案例">
         <span class="dot"></span>
         <span id="ocisBrandLabel">OcisMILPNet</span>
+        <i class="ph-caret-down-bold"></i>
+      </button>
+      <button type="button" id="ocisLayout" class="ocis-brand ocis-layout" aria-haspopup="listbox" aria-expanded="false" title="选择或保存拓扑布局">
+        <i class="ph-map-pin-bold"></i>
+        <span id="ocisLayoutLabel">布局</span>
         <i class="ph-caret-down-bold"></i>
       </button>
       <div class="sep"></div>
@@ -469,6 +498,7 @@
     <button type="button" data-act="connect"><i class="ph-arrow-right-bold"></i> 连接</button>
   </div>
   <div id="ocisCaseMenu" class="ocis-case-menu" role="listbox"></div>
+  <div id="ocisLayoutMenu" class="ocis-case-menu" role="listbox"></div>
 
   <script>
   (function setupCasePicker() {
@@ -586,6 +616,7 @@
       if (!next || next === currentCaseName()) return;
       const url = new URL(window.location.href);
       url.searchParams.set("data", next);
+      url.searchParams.delete("layout");
       window.location.assign(url.toString());
     }
 
@@ -613,7 +644,13 @@
         ev.preventDefault();
         ev.stopPropagation();
         if (menu.classList.contains("open")) closeMenu();
-        else openMenu();
+        else {
+          const other = document.getElementById("ocisLayoutMenu");
+          if (other) other.classList.remove("open");
+          const otherBtn = document.getElementById("ocisLayout");
+          if (otherBtn) otherBtn.setAttribute("aria-expanded", "false");
+          openMenu();
+        }
         return;
       }
     });
@@ -643,6 +680,368 @@
         boot();
       }
     }, 40);
+  })();
+  </script>
+
+  <script>
+  (function setupLayoutPicker() {
+    const DEFAULT_LABEL = "布局";
+    const menu = document.getElementById("ocisLayoutMenu");
+    let layouts = [];
+    let saving = false;
+
+    function btnEl() { return document.getElementById("ocisLayout"); }
+    function labelEl() { return document.getElementById("ocisLayoutLabel"); }
+
+    function currentCaseName() {
+      const q = new URLSearchParams(window.location.search).get("data");
+      return (q && q.trim()) || "";
+    }
+
+    function currentLayoutName() {
+      const q = new URLSearchParams(window.location.search).get("layout");
+      return (q && q.trim()) || "";
+    }
+
+    function setLayoutQuery(name) {
+      const url = new URL(window.location.href);
+      if (name) url.searchParams.set("layout", name);
+      else url.searchParams.delete("layout");
+      history.replaceState({}, "", url.toString());
+    }
+
+    function setLabel(name) {
+      const el = labelEl();
+      if (el) el.textContent = name || DEFAULT_LABEL;
+      const btn = btnEl();
+      if (btn) btn.title = name ? ("当前布局：" + name) : "选择或保存拓扑布局";
+    }
+
+    function closeMenu() {
+      if (!menu) return;
+      menu.classList.remove("open");
+      const btn = btnEl();
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    function closeCaseMenu() {
+      const other = document.getElementById("ocisCaseMenu");
+      if (other) other.classList.remove("open");
+      const brand = document.getElementById("ocisBrand");
+      if (brand) brand.setAttribute("aria-expanded", "false");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function nodeName(node) {
+      if (!node) return "";
+      const props = node.properties || {};
+      return String(props.name || props.title || "").trim();
+    }
+
+    function pauseForceLayout() {
+      document.querySelectorAll(".toolbar .btn").forEach((el) => {
+        if (el.classList.contains("active") && /pause/i.test(el.textContent || "")) {
+          el.click();
+        }
+      });
+      if (window.g && window.g.stopLayout) window.g.stopLayout();
+    }
+
+    function collectLayout() {
+      const g = window.g;
+      if (!g || !g.getGraph) throw new Error("图尚未加载");
+      const graph = g.getGraph();
+      const positions = {};
+      for (const id of graph.activeNodeIds()) {
+        const node = graph.getNode(id);
+        const name = nodeName(node);
+        if (!name) continue;
+        positions[name] = {
+          x: graph.positions[id * 2],
+          y: graph.positions[id * 2 + 1]
+        };
+      }
+      if (!Object.keys(positions).length) throw new Error("没有可保存的节点坐标");
+      let camera = null;
+      if (g.camera && typeof g.camera.getState === "function") {
+        camera = g.camera.getState();
+      }
+      return { positions: positions, camera: camera };
+    }
+
+    function applyLayoutData(data) {
+      const g = window.g;
+      if (!g || !g.getGraph || !data || typeof data !== "object") return false;
+      pauseForceLayout();
+      const graph = g.getGraph();
+      const byName = new Map();
+      for (const id of graph.activeNodeIds()) {
+        const node = graph.getNode(id);
+        const name = nodeName(node);
+        if (name) byName.set(name, node);
+      }
+      const pos = data.positions && typeof data.positions === "object" ? data.positions : {};
+      let n = 0;
+      Object.keys(pos).forEach((name) => {
+        const node = byName.get(name);
+        const pt = pos[name];
+        if (!node || !pt) return;
+        const x = Number(pt.x), y = Number(pt.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        graph.setNodePosition(node.id, x, y);
+        n += 1;
+      });
+      if (g.markDirty) g.markDirty();
+      const cam = data.camera;
+      if (cam && g.camera) {
+        if (typeof cam.x === "number" && typeof cam.y === "number" && g.camera.setPosition) {
+          g.camera.setPosition(cam.x, cam.y);
+        }
+        if (typeof cam.zoom === "number" && g.camera.setZoom) g.camera.setZoom(cam.zoom);
+      } else if (n && g.fitView) {
+        g.fitView(0.15);
+      }
+      return n > 0;
+    }
+
+    function nextDefaultName() {
+      const used = new Set(layouts.map((item) => String(item.name || "")));
+      if (currentLayoutName() && used.has(currentLayoutName())) return currentLayoutName();
+      let i = layouts.length + 1;
+      let name = "布局 " + i;
+      while (used.has(name)) {
+        i += 1;
+        name = "布局 " + i;
+      }
+      return name;
+    }
+
+    function renderMenu(errorText) {
+      const current = currentLayoutName();
+      const saveName = nextDefaultName();
+      const hint = errorText
+        ? '<div class="ocis-layout-hint">' + escapeHtml(errorText) + "</div>"
+        : '<div class="ocis-layout-hint">保存当前节点位置，稍后可再选回来</div>';
+      const saveRow =
+        '<div class="ocis-layout-save">' +
+        '<input id="ocisLayoutName" type="text" maxlength="80" value="' + escapeHtml(saveName) + '" />' +
+        '<button type="button" data-act="save">保存</button>' +
+        "</div>";
+      let list = "";
+      if (!layouts.length) {
+        list = '<div class="case-menu-empty">还没有已保存的布局</div>';
+      } else {
+        list = layouts.map((item) => {
+          const name = String(item.name || "").trim();
+          const active = name === current ? " active" : "";
+          const meta = item.nodeCount ? " · " + item.nodeCount + " 节点" : "";
+          return '<div class="ocis-layout-item">' +
+            '<button type="button" role="option" data-name="' + escapeHtml(name) + '" class="' + active.trim() + '">' +
+            escapeHtml(name) + meta + "</button>" +
+            '<button type="button" data-del="' + escapeHtml(name) + '" title="删除">×</button>' +
+            "</div>";
+        }).join("");
+      }
+      menu.innerHTML = '<div class="case-menu-title">拓扑布局</div>' + hint + saveRow + list;
+      const input = document.getElementById("ocisLayoutName");
+      if (input) {
+        input.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            saveCurrent(input.value);
+          }
+        });
+      }
+    }
+
+    function positionMenu() {
+      const btn = btnEl();
+      if (!btn || !menu) return;
+      const rect = btn.getBoundingClientRect();
+      const width = Math.max(240, Math.min(Math.max(rect.width, 260), 420));
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+      menu.style.left = left + "px";
+      menu.style.top = rect.bottom + "px";
+      menu.style.minWidth = width + "px";
+    }
+
+    async function refreshList() {
+      const caseName = currentCaseName();
+      if (!caseName) {
+        layouts = [];
+        return;
+      }
+      const resp = await fetch("/api/graph-layouts?case=" + encodeURIComponent(caseName) + "&_=" + Date.now(), { cache: "no-store" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+      layouts = Array.isArray(data.layouts) ? data.layouts : [];
+    }
+
+    async function openMenu() {
+      try {
+        await refreshList();
+        renderMenu();
+      } catch (err) {
+        layouts = [];
+        renderMenu(String(err.message || err));
+      }
+      positionMenu();
+      menu.classList.add("open");
+      const btn = btnEl();
+      if (btn) btn.setAttribute("aria-expanded", "true");
+      const input = document.getElementById("ocisLayoutName");
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+
+    async function saveCurrent(rawName) {
+      if (saving) return;
+      const caseName = currentCaseName();
+      if (!caseName) {
+        renderMenu("请先选择案例");
+        return;
+      }
+      const name = String(rawName || "").trim();
+      if (!name) {
+        renderMenu("请输入布局名称");
+        return;
+      }
+      saving = true;
+      try {
+        const snap = collectLayout();
+        const resp = await fetch("/api/graph-layouts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            case: caseName,
+            name: name,
+            positions: snap.positions,
+            camera: snap.camera
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+        await refreshList();
+        setLayoutQuery(data.name || name);
+        setLabel(data.name || name);
+        renderMenu("已保存");
+      } catch (err) {
+        renderMenu(String(err.message || err));
+      } finally {
+        saving = false;
+      }
+    }
+
+    async function selectLayout(name) {
+      const caseName = currentCaseName();
+      const next = String(name || "").trim();
+      if (!caseName || !next) return;
+      try {
+        const resp = await fetch(
+          "/api/graph-layouts?case=" + encodeURIComponent(caseName) + "&name=" + encodeURIComponent(next) + "&_=" + Date.now(),
+          { cache: "no-store" }
+        );
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+        applyLayoutData(data);
+        setTimeout(() => applyLayoutData(data), 50);
+        setTimeout(() => applyLayoutData(data), 900);
+        setLayoutQuery(next);
+        setLabel(next);
+        closeMenu();
+      } catch (err) {
+        renderMenu(String(err.message || err));
+      }
+    }
+
+    async function deleteLayout(name) {
+      const caseName = currentCaseName();
+      const next = String(name || "").trim();
+      if (!caseName || !next) return;
+      try {
+        const resp = await fetch("/api/graph-layouts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ case: caseName, name: next, action: "delete" })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+        if (currentLayoutName() === next) {
+          setLayoutQuery("");
+          setLabel("");
+        }
+        await refreshList();
+        renderMenu("已删除");
+      } catch (err) {
+        renderMenu(String(err.message || err));
+      }
+    }
+
+    async function restoreFromQuery() {
+      const name = currentLayoutName();
+      if (!name || !currentCaseName()) return;
+      setLabel(name);
+      const started = Date.now();
+      const timer = setInterval(() => {
+        if (window.g && window.g.getGraph) {
+          clearInterval(timer);
+          selectLayout(name);
+        } else if (Date.now() - started > 20000) {
+          clearInterval(timer);
+        }
+      }, 80);
+    }
+
+    document.addEventListener("click", (ev) => {
+      const btn = ev.target.closest && ev.target.closest("#ocisLayout");
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (menu.classList.contains("open")) closeMenu();
+      else {
+        closeCaseMenu();
+        openMenu();
+      }
+    });
+    menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    menu.addEventListener("click", (ev) => {
+      const del = ev.target.closest("button[data-del]");
+      if (del) {
+        ev.preventDefault();
+        deleteLayout(del.getAttribute("data-del"));
+        return;
+      }
+      if (ev.target.closest("button[data-act='save']")) {
+        ev.preventDefault();
+        const input = document.getElementById("ocisLayoutName");
+        saveCurrent(input ? input.value : "");
+        return;
+      }
+      const item = ev.target.closest("button[data-name]");
+      if (!item) return;
+      ev.preventDefault();
+      selectLayout(item.getAttribute("data-name"));
+    });
+    document.addEventListener("mousedown", (ev) => {
+      if (!menu.classList.contains("open")) return;
+      if (ev.target.closest && (ev.target.closest("#ocisLayoutMenu") || ev.target.closest("#ocisLayout"))) return;
+      closeMenu();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeMenu();
+    });
+
+    setLabel(currentLayoutName());
+    restoreFromQuery();
   })();
   </script>
 
