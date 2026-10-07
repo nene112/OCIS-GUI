@@ -7,7 +7,7 @@
  * - Optional SHP layer draws mapped shp positions.
  */
 (function graphSpatialLayer() {
-	console.log('[topo-spatial BUILD] 20261007-1340 default-layers-on');
+	console.log('[topo-spatial BUILD] 20261007-1341 v2-keys');
 	var SCALE_KEY = 'ocisSpatialScale';
 	var STRENGTH_KEY = 'ocisSpatialStrength';
 	var STRENGTH_BY_TYPE_KEY = 'ocisSpatialStrengthByType';
@@ -16,9 +16,11 @@
 	var STUB_SNAP_KEY = 'ocisStubSnap';
 	var STUB_PULL_KEY = 'ocisStubPull';
 	var SPATIAL_REPULSE_KEY = 'ocisSpatialRepulse';
-	var SHOW_CENTER_KEY = 'ocisShowScaleCenter';
-	var SHOW_SHP_KEY = 'ocisShowShpLayer';
-	var SHOW_ATTRACT_KEY = 'ocisShowAttractLayer';
+	// v2 键名：隔离旧版本（尤其 Chrome 里可能残留的 ocisShowShpLayer=0 关闭值），
+	// 新键无值即默认显示，避免按域名/浏览器隔离的 localStorage 造成两边表现不一致。
+	var SHOW_CENTER_KEY = 'ocisShowScaleCenterV2';
+	var SHOW_SHP_KEY = 'ocisShowShpLayerV2';
+	var SHOW_ATTRACT_KEY = 'ocisShowAttractLayerV2';
 	var ATTRACT_K_KEY = 'ocisAttractK';
 	var FORCE_KIND_KEY = 'ocisForceKinds';
 	var OVERLAY_ID = 'ocis-spatial-overlay';
