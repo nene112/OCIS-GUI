@@ -7,6 +7,7 @@
  * - Optional SHP layer draws mapped shp positions.
  */
 (function graphSpatialLayer() {
+	console.log('[topo-spatial BUILD] 20261007-1335 smooth-attract');
 	var SCALE_KEY = 'ocisSpatialScale';
 	var STRENGTH_KEY = 'ocisSpatialStrength';
 	var STRENGTH_BY_TYPE_KEY = 'ocisSpatialStrengthByType';
