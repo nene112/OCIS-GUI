@@ -176,11 +176,11 @@
     .toolbar .ocis-spatial-scale input[type="range"]{
       width:88px;accent-color:var(--accent);cursor:pointer;
     }
-    #ocisSpatialScaleVal{
+    #ocisSpatialScaleVal, #ocisAttractKVal{
       min-width:3.2em;font-variant-numeric:tabular-nums;opacity:.9;
     }
     .toolbar .ocis-free-force{
-      position:relative;margin:0 4px;font-size:12px;color:var(--text-dim);flex:0 0 auto;
+      position:relative;margin:0 4px;font-size:12px;color:var(--text-dim);flex:0 0 auto;z-index:10002;
     }
     .toolbar .ocis-free-force > summary{
       list-style:none;cursor:pointer;padding:4px 8px;height:30px;box-sizing:border-box;
@@ -190,7 +190,7 @@
     .toolbar .ocis-free-force > summary::-webkit-details-marker{display:none}
     .toolbar .ocis-free-force[open] > summary{color:var(--accent);border-color:var(--accent)}
     .toolbar .ocis-free-force-menu{
-      position:absolute;top:calc(100% + 4px);left:0;z-index:30;
+      position:absolute;top:calc(100% + 4px);left:0;z-index:10003;
       min-width:172px;padding:8px;border-radius:8px;
       background:var(--bg-elevated);border:1px solid var(--border);box-shadow:var(--shadow);
       display:flex;flex-direction:column;gap:2px;
@@ -200,6 +200,29 @@
       color:var(--text);white-space:nowrap;border-radius:4px;
     }
     .toolbar .ocis-free-force-menu label:hover{background:var(--accent-soft)}
+    .toolbar .ocis-force-kind{position:relative;margin:0 4px;font-size:12px;flex:0 0 auto;z-index:10002}
+    .toolbar .ocis-force-kind > summary{
+      list-style:none;cursor:pointer;padding:4px 8px;height:30px;box-sizing:border-box;
+      border-radius:8px;border:1px solid var(--border);background:var(--bg-surface);
+      white-space:nowrap;display:inline-flex;align-items:center;gap:4px;color:var(--text);
+    }
+    .toolbar .ocis-force-kind > summary::-webkit-details-marker{display:none}
+    .toolbar .ocis-force-kind[open] > summary,
+    .toolbar .ocis-force-kind > summary.active{color:var(--accent);border-color:var(--accent)}
+    .toolbar .ocis-force-kind-menu{
+      position:absolute;top:calc(100% + 4px);left:0;z-index:10003;
+      min-width:168px;padding:8px;border-radius:8px;
+      background:var(--bg-elevated);border:1px solid var(--border);box-shadow:var(--shadow);
+      display:flex;flex-direction:column;gap:2px;
+    }
+    .toolbar .ocis-force-kind-menu label{
+      display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;
+      color:var(--text);white-space:nowrap;border-radius:4px;font-size:12px;
+    }
+    .toolbar .ocis-force-kind-menu label:hover{background:var(--accent-soft)}
+    .toolbar .ocis-force-kind-menu .ocis-force-swatch{
+      width:14px;height:0;border-top:2px dashed currentColor;flex:none;
+    }
     .ocis-param-max-lab{
       font-size:11px;opacity:.65;margin-left:4px;white-space:nowrap;flex:none;
     }
@@ -238,6 +261,19 @@
         <input type="range" id="ocisSpatialScale" min="0.2" max="5" step="0.05" value="1" />
         <span id="ocisSpatialScaleVal">1.00×</span>
       </label>
+      <label class="ocis-spatial-scale" id="ocisAttractKWrap" title="吸引力度：空间分布开启后拉向目标的强度（滚轮调节）">
+        <span class="ocis-spatial-scale-label">力度</span>
+        <input type="range" id="ocisAttractK" min="0.05" max="5" step="0.05" value="1" />
+        <span id="ocisAttractKVal">1.00</span>
+      </label>
+      <details class="ocis-force-kind" id="ocisForceKindWrap" title="空间分布开启后按勾选类型施力：SHP 吸引闸/水源、渠段绷在两端之间、内边界被渠段吸引">
+        <summary id="ocisForceKindSummary"><i class="ph-graph-bold"></i> 力导类型</summary>
+        <div class="ocis-force-kind-menu" id="ocisForceKindMenu">
+          <label><input type="checkbox" data-force-kind="shp" checked /> <span class="ocis-force-swatch" style="color:#f59e0b"></span> SHP 吸引</label>
+          <label><input type="checkbox" data-force-kind="canal" checked /> <span class="ocis-force-swatch" style="color:#22d3ee"></span> 渠段绷紧</label>
+          <label><input type="checkbox" data-force-kind="stub" checked /> <span class="ocis-force-swatch" style="color:#c084fc"></span> 内边界吸引</label>
+        </div>
+      </details>
       <details class="ocis-free-force" id="ocisFreeForceWrap" title="空间分布开启后：未勾选类型默认钉住或层级吸引；勾选后解除吸引并用弹簧/斥力自由力导">
         <summary><i class="ph-faders-bold"></i> 自由力导</summary>
         <div class="ocis-free-force-menu" id="ocisFreeForceMenu">
@@ -250,6 +286,9 @@
           <label><input type="checkbox" data-free="other" /> 其他未匹配</label>
         </div>
       </details>
+      <button type="button" class="btn" id="ocisAttractLayerBtn" title="虚线显示吸引关系；力由「空间分布」施加，旁边「力度」可调">
+        <i class="ph-line-segment-bold"></i> 吸引
+      </button>
       <button type="button" class="btn" id="ocisShpLayerBtn" title="显示/隐藏 SHP 映射位置图层">
         <i class="ph-map-trifold-bold"></i> SHP
       </button>
@@ -597,6 +636,12 @@
               </div>
             </div>
             <div class="setting-row">
+              <label>显示吸引虚线</label>
+              <div class="toggle-group">
+                <button type="button" class="toggle-btn" id="ocisToggleAttractLayer">Off</button>
+              </div>
+            </div>
+            <div class="setting-row">
               <label>缩放中心</label>
               <div class="toggle-group">
                 <button type="button" class="toggle-btn" id="ocisResetScaleCenter" title="重置为初始包围盒中心">重置中心</button>
@@ -607,7 +652,7 @@
                 吸引力度 / 内边界贴靠
               </summary>
               <p style="margin:6px 0 8px;font-size:11px;opacity:.7;line-height:1.4">
-                需开启「空间分布」后生效。先选节点类型，再调该类型的吸引力度；右侧「上限」改滑条最大范围。
+                点「空间分布」后持续吸引直到靠近目标。工具栏「力度」为总倍率。GPU 全局弹簧已关闭，边长跟节点位置走。
               </p>
               <div class="setting-row">
                 <label>力度类型</label>
@@ -1029,6 +1074,16 @@
       }
     }
 
+    function springLenFromNodes() {
+      try {
+        if (window.__ocisSpatial && typeof window.__ocisSpatial.springLengthFromPositions === "function") {
+          var L = window.__ocisSpatial.springLengthFromPositions();
+          if (isFinite(L) && L > 1) return L;
+        }
+      } catch (eLen) { /* ignore */ }
+      return 24;
+    }
+
     /**
      * Force layout must keep ticking until the user hits pause.
      * GraphGPU's default startLayout() uses animated=false + maxIterations=1000,
@@ -1072,8 +1127,8 @@
           window.__ocisForcePaused = false;
           const merged = Object.assign({
             maxIterations: 1e9,
-            springLength: 55,
-            springConstant: 0.05,
+            springLength: springLenFromNodes(),
+            springConstant: 0,
             damping: 0.85
           }, opts || {});
           const ret = origStart(merged);
@@ -1183,8 +1238,8 @@
       if (typeof g.startLayout === "function") {
         g.startLayout({
           maxIterations: 1e9,
-          springLength: 55,
-          springConstant: 0.05,
+          springLength: springLenFromNodes(),
+          springConstant: 0,
           damping: 0.85
         });
       }
@@ -2019,8 +2074,8 @@
   <script src="/canvas2d-fallback.js?v=8"></script>
   <script src="/topo_ui/graph-export-png.js?v=3"></script>
   <script src="/topo_ui/graph-live-api.js?v=6"></script>
-  <script src="/topo_ui/graph-spatial-layer.js?v=17"></script>
-  <script src="/topo_ui/graph-node-size.js?v=4"></script>
+  <script src="/topo_ui/graph-spatial-layer.js?v=33"></script>
+  <script src="/topo_ui/graph-node-size.js?v=6"></script>
 
 </body>
 </html>

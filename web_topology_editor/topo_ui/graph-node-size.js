@@ -10,8 +10,8 @@
 	var MAX = 20;
 	var STEP = 0.5;
 
-	/** Force spacing baselines (match keepAlive / GraphGPU defaults at size=8). */
-	var BASE_SPRING = 55;
+	/** Fallback only when positions are not ready; live rest length comes from node positions. */
+	var BASE_SPRING = 24;
 	var BASE_GRAV = -0.25;
 	/** Spatial soften baselines at size=8 (see graph-spatial-layer softenPhysicsForSpatial). */
 	var SPATIAL_SPRING = 14;
@@ -112,18 +112,24 @@
 		var factor = sizeScaleFactor();
 		var c = g.layout.config;
 		if (spatialActive()) {
-			// Spatial softenPhysicsForSpatial owns springs/repulsion (incl. free-force profile).
-			if (window.__ocisSpatial && typeof window.__ocisSpatial.rehook === 'function') {
-				// no-op here; attractor loop re-softens each tick
-			}
+			c.springConstant = 0;
 			return;
 		} else {
-			var baseSpring = Number(window.__ocisBaseSpringLength);
-			if (!isFinite(baseSpring) || baseSpring <= 0) baseSpring = BASE_SPRING;
 			var baseGrav = Number(window.__ocisBaseGrav);
 			if (!isFinite(baseGrav)) baseGrav = BASE_GRAV;
-			c.springLength = baseSpring * factor;
 			c.gravitationalConstant = baseGrav * factor;
+			c.springConstant = 0;
+			var posL = 0;
+			if (window.__ocisSpatial && typeof window.__ocisSpatial.springLengthFromPositions === 'function') {
+				posL = Number(window.__ocisSpatial.springLengthFromPositions());
+			}
+			if (isFinite(posL) && posL > 0) {
+				c.springLength = posL;
+			} else {
+				var baseSpring = Number(window.__ocisBaseSpringLength);
+				if (!isFinite(baseSpring) || baseSpring <= 0) baseSpring = BASE_SPRING;
+				c.springLength = baseSpring * factor;
+			}
 		}
 	}
 

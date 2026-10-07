@@ -17,7 +17,16 @@
 	var SPATIAL_REPULSE_KEY = 'ocisSpatialRepulse';
 	var SHOW_CENTER_KEY = 'ocisShowScaleCenter';
 	var SHOW_SHP_KEY = 'ocisShowShpLayer';
+	var SHOW_ATTRACT_KEY = 'ocisShowAttractLayer';
+	var ATTRACT_K_KEY = 'ocisAttractK';
+	var FORCE_KIND_KEY = 'ocisForceKinds';
 	var OVERLAY_ID = 'ocis-spatial-overlay';
+	var FORCE_KINDS = ['shp', 'canal', 'stub'];
+	var FORCE_KIND_COLOR = {
+		shp: 'rgba(245, 158, 11, 0.9)',
+		canal: 'rgba(34, 211, 238, 0.9)',
+		stub: 'rgba(192, 132, 252, 0.45)'
+	};
 
 	var STRENGTH_TYPES = ['type-4', 'type-0', 'canal', 'stub', 'other'];
 	/** @type {Record<string,number>} */
@@ -27,6 +36,12 @@
 	var busy = false;
 	/** @type {{minX:number,maxX:number,minY:number,maxY:number,cx:number,cy:number,w:number,h:number}|null} */
 	var initialBBox = null;
+	/** Frozen force-layout AABB — only used for default scaleCenter. */
+	/** @type {{minX:number,maxX:number,minY:number,maxY:number,cx:number,cy:number,w:number,h:number}|null} */
+	var layoutBBox = null;
+	/** Dashed frame = AABB of displayed SHP after 缩放 (attract targets live inside). */
+	/** @type {{minX:number,maxX:number,minY:number,maxY:number,cx:number,cy:number,w:number,h:number}|null} */
+	var spatialFrame = null;
 	/** @type {{x:number,y:number}|null} */
 	var scaleCenter = null;
 	/** @type {Record<string,{x:number,y:number}>|null} raw GIS for type=4 gates */
@@ -40,6 +55,9 @@
 
 	var showScaleCenter = false;
 	var showShpLayer = false;
+	var showAttractLayer = false;
+	/** @type {Set<string>} */
+	var forceKinds = new Set(FORCE_KINDS);
 	var overlay = null;
 	var octx = null;
 	var raf = 0;
@@ -48,6 +66,7 @@
 	try {
 		showScaleCenter = localStorage.getItem(SHOW_CENTER_KEY) === '1';
 		showShpLayer = localStorage.getItem(SHOW_SHP_KEY) === '1';
+		showAttractLayer = localStorage.getItem(SHOW_ATTRACT_KEY) === '1';
 	} catch (e0) { /* ignore */ }
 
 	function caseName() {
@@ -77,6 +96,47 @@
 		var v = el ? Number(el.value) : Number(localStorage.getItem(SCALE_KEY));
 		if (!isFinite(v) || v <= 0) v = 1;
 		return Math.max(0.2, Math.min(5, v));
+	}
+
+	function readAttractK() {
+		var el = document.getElementById('ocisAttractK');
+		var v = el ? Number(el.value) : Number(localStorage.getItem(ATTRACT_K_KEY));
+		if (!isFinite(v) || v <= 0) v = 1;
+		return Math.max(0.05, Math.min(5, v));
+	}
+
+	function writeAttractK(v, persist) {
+		if (!isFinite(v)) return readAttractK();
+		v = Math.round(Math.max(0.05, Math.min(5, v)) * 100) / 100;
+		var el = document.getElementById('ocisAttractK');
+		if (el) el.value = String(v);
+		var lab = document.getElementById('ocisAttractKVal');
+		if (lab) lab.textContent = v.toFixed(2);
+		if (persist !== false) {
+			try { localStorage.setItem(ATTRACT_K_KEY, String(v)); } catch (e) { /* ignore */ }
+		}
+		return v;
+	}
+
+	/** Mix toward target: far = close the gap this frame; near = hold. k is 吸引力度. */
+	function approachMix(dist, k) {
+		var kk = isFinite(k) && k > 0 ? k : 1;
+		if (!(dist > 0) || !isFinite(dist)) return 0.2;
+		if (dist > 12) return Math.min(0.95, 0.4 + kk * 0.2);
+		if (dist > 4) return Math.min(0.8, 0.22 + kk * 0.14);
+		return Math.min(0.5, 0.1 + kk * 0.08);
+	}
+
+	function disableGlobalSprings() {
+		var g = gObj();
+		if (!g || !g.layout || !g.layout.config) return;
+		var c = g.layout.config;
+		c.springConstant = 0;
+		// N-body repulsion is what turns direct laterals into a starburst.
+		if (spatialActive && !(freeForceTypes && freeForceTypes.size > 0)) {
+			c.gravitationalConstant = 0;
+			c.centralGravity = 0;
+		}
 	}
 
 	function writeScale(v, persist) {
@@ -365,8 +425,58 @@
 		try {
 			localStorage.setItem(SHOW_CENTER_KEY, showScaleCenter ? '1' : '0');
 			localStorage.setItem(SHOW_SHP_KEY, showShpLayer ? '1' : '0');
+			localStorage.setItem(SHOW_ATTRACT_KEY, showAttractLayer ? '1' : '0');
 		} catch (e) { /* ignore */ }
 		syncToggleUi();
+	}
+
+	function overlayWanted() {
+		return showShpLayer || showScaleCenter || showAttractLayer;
+	}
+
+	function forceKindOn(kind) {
+		return forceKinds.has(kind);
+	}
+
+	function persistForceKinds() {
+		try {
+			localStorage.setItem(FORCE_KIND_KEY, JSON.stringify(Array.from(forceKinds)));
+		} catch (e) { /* ignore */ }
+		syncForceKindUi();
+	}
+
+	function loadForceKinds() {
+		forceKinds = new Set(FORCE_KINDS);
+		try {
+			var raw = localStorage.getItem(FORCE_KIND_KEY);
+			if (raw) {
+				var arr = JSON.parse(raw);
+				if (Array.isArray(arr)) {
+					forceKinds = new Set();
+					arr.forEach(function (k) {
+						if (FORCE_KINDS.indexOf(k) >= 0) forceKinds.add(k);
+					});
+				}
+			}
+		} catch (e) { /* ignore */ }
+		syncForceKindUi();
+	}
+
+	function syncForceKindUi() {
+		var menu = document.getElementById('ocisForceKindMenu');
+		if (menu) {
+			menu.querySelectorAll('input[data-force-kind]').forEach(function (inp) {
+				inp.checked = forceKinds.has(inp.getAttribute('data-force-kind'));
+			});
+		}
+		var sum = document.getElementById('ocisForceKindSummary');
+		if (sum) {
+			var n = forceKinds.size;
+			sum.classList.toggle('active', n > 0 && n < FORCE_KINDS.length);
+			sum.innerHTML = n === FORCE_KINDS.length
+				? '<i class="ph-graph-bold"></i> 力导类型'
+				: ('<i class="ph-graph-bold"></i> 力导类型·' + n);
+		}
 	}
 
 	function syncToggleUi() {
@@ -387,9 +497,21 @@
 				? ('SHP 图层开 · ' + (mappedShp.length || 0) + ' 点')
 				: '显示/隐藏 SHP 映射位置图层';
 		}
+		var a = document.getElementById('ocisToggleAttractLayer');
+		if (a) {
+			a.classList.toggle('active', showAttractLayer);
+			a.textContent = showAttractLayer ? 'On' : 'Off';
+		}
+		var ab = document.getElementById('ocisAttractLayerBtn');
+		if (ab) {
+			ab.classList.toggle('active', showAttractLayer);
+			ab.title = showAttractLayer
+				? '吸引虚线开 · 再点关闭'
+				: '用虚线显示吸引关系（SHP / 渠段 / 内边界）';
+		}
 		if (overlay) {
 			overlay.style.pointerEvents = showScaleCenter ? 'auto' : 'none';
-			overlay.style.display = (showShpLayer || showScaleCenter) ? 'block' : 'none';
+			overlay.style.display = overlayWanted() ? 'block' : 'none';
 		}
 	}
 
@@ -453,7 +575,11 @@
 						if (!p) return;
 						var x = Number(p.x), y = Number(p.y);
 						if (!isFinite(x) || !isFinite(y)) return;
-						rawGateGis[nm] = { x: x, y: y };
+						rawGateGis[nm] = {
+							x: x,
+							y: y,
+							shpName: String(p.shpName || nm).trim()
+						};
 					});
 				}
 				rebuildMapped();
@@ -483,9 +609,112 @@
 		}
 	}
 
-	/** Capture AABB of all active nodes — frozen as "初始包围盒". */
+	function setAttractVisible(on) {
+		showAttractLayer = !!on;
+		persistFlags();
+		if (showAttractLayer) {
+			startPaintLoop();
+			if (forceKindOn('shp')) ensureShpData();
+		} else {
+			syncToggleUi();
+		}
+	}
+
+	function collectAttractLinks() {
+		var links = [];
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph) return links;
+		if (forceKindOn('shp') && !forceTargets && (rawShpAll.length || rawGateGis) && initialBBox) {
+			rebuildMapped();
+		}
+		var byName = Object.create(null);
+		graph.activeNodeIds().forEach(function (id) {
+			var node = graph.getNode(id);
+			if (!node) return;
+			var name = nodeDisplayName(node);
+			if (name) byName[name] = node;
+		});
+		function posOf(id) {
+			var x = graph.positions[id * 2];
+			var y = graph.positions[id * 2 + 1];
+			if (!isFinite(x) || !isFinite(y)) return null;
+			return { x: x, y: y };
+		}
+		if (forceKindOn('shp')) {
+			var shpSrc = shpTargetMap();
+			if (!Object.keys(shpSrc).length) shpSrc = null;
+			if (shpSrc) {
+				Object.keys(shpSrc).forEach(function (name) {
+					var node = byName[name];
+					var tgt = shpSrc[name];
+					if (!node || !tgt || isCanalNode(node)) return;
+					var p = posOf(node.id);
+					if (!p) return;
+					links.push({ kind: 'shp', x0: p.x, y0: p.y, x1: tgt.x, y1: tgt.y });
+				});
+			}
+		}
+		if (forceKindOn('canal')) {
+			graph.activeNodeIds().forEach(function (id) {
+				var node = graph.getNode(id);
+				if (!isCanalNode(node)) return;
+				var props = node.properties || {};
+				var sNode = byName[String(props.source || '').trim()];
+				var tNode = byName[String(props.target || '').trim()];
+				var p = posOf(id);
+				if (!p) return;
+				if (sNode) {
+					var sp = posOf(sNode.id);
+					if (sp) links.push({ kind: 'canal', x0: p.x, y0: p.y, x1: sp.x, y1: sp.y });
+				}
+				if (tNode) {
+					var tp = posOf(tNode.id);
+					if (tp) links.push({ kind: 'canal', x0: p.x, y0: p.y, x1: tp.x, y1: tp.y });
+				}
+			});
+		}
+		if (forceKindOn('stub')) {
+			var parentOf = buildStubParents(graph);
+			Object.keys(parentOf).forEach(function (stubIdStr) {
+				var stubId = Number(stubIdStr);
+				var parentId = parentOf[stubId];
+				var stub = graph.getNode(stubId);
+				if (!stub || isCanalNode(stub)) return;
+				if (forceTargets && forceTargets[nodeDisplayName(stub)]) return;
+				var attractId = resolveStubAttractId(g, graph, stubId, parentId);
+				var a = posOf(attractId);
+				var s = posOf(stubId);
+				if (!a || !s) return;
+				links.push({ kind: 'stub', x0: s.x, y0: s.y, x1: a.x, y1: a.y });
+			});
+		}
+		return links;
+	}
+
+	function makeBox(minX, maxX, minY, maxY, padFrac) {
+		var w = Math.max(maxX - minX, 1);
+		var h = Math.max(maxY - minY, 1);
+		var pad = padFrac == null ? 0.05 : padFrac;
+		return {
+			minX: minX + w * pad,
+			maxX: maxX - w * pad,
+			minY: minY + h * pad,
+			maxY: maxY - h * pad,
+			cx: (minX + maxX) / 2,
+			cy: (minY + maxY) / 2,
+			w: w * (1 - 2 * pad),
+			h: h * (1 - 2 * pad)
+		};
+	}
+
+	/** Capture force-layout AABB once = 初始框. SHP always maps into this box. */
 	function captureInitialBBox(force) {
-		if (initialBBox && !force) return initialBBox;
+		if (layoutBBox && !force) {
+			initialBBox = layoutBBox;
+			window.__ocisInitialBBox = initialBBox;
+			return layoutBBox;
+		}
 		var g = gObj();
 		var graph = graphOf(g);
 		if (!graph) return null;
@@ -502,73 +731,69 @@
 			n += 1;
 		});
 		if (!n || !isFinite(minX)) return null;
-		var w = Math.max(maxX - minX, 1);
-		var h = Math.max(maxY - minY, 1);
-		var pad = 0.05;
-		initialBBox = {
-			minX: minX + w * pad,
-			maxX: maxX - w * pad,
-			minY: minY + h * pad,
-			maxY: maxY - h * pad,
-			cx: (minX + maxX) / 2,
-			cy: (minY + maxY) / 2,
-			w: w * (1 - 2 * pad),
-			h: h * (1 - 2 * pad)
-		};
+		layoutBBox = makeBox(minX, maxX, minY, maxY, 0.05);
+		initialBBox = layoutBBox;
+		spatialFrame = null;
 		if (!scaleCenter) {
-			scaleCenter = { x: initialBBox.cx, y: initialBBox.cy };
+			scaleCenter = { x: layoutBBox.cx, y: layoutBBox.cy };
 		}
 		window.__ocisInitialBBox = initialBBox;
-		return initialBBox;
+		return layoutBBox;
 	}
 
 	function resetScaleCenter() {
-		if (!initialBBox) captureInitialBBox(false);
-		if (!initialBBox) return;
-		scaleCenter = { x: initialBBox.cx, y: initialBBox.cy };
+		if (!layoutBBox) captureInitialBBox(false);
+		if (!layoutBBox) return;
+		scaleCenter = { x: layoutBBox.cx, y: layoutBBox.cy };
 		rebuildMapped();
 	}
 
 	/**
-	 * Build GIS→topo mapper: uniform shrink into initialBBox, about scaleCenter.
-	 * Both axes get smaller (xy 都减小) so GIS meters fit the topo region.
+	 * GIS → 初始框: uniform shrink into layoutBBox about scaleCenter.
+	 * 缩放=1 → every SHP marker inside the dashed 初始框.
+	 * 缩放 multiplies about center (may leave box if >1).
+	 * Attract targets = these displayed marker positions.
 	 */
 	function buildMapper() {
-		var box = initialBBox;
+		var box = layoutBBox || initialBBox;
 		var center = scaleCenter;
+		if (!center && box) center = { x: box.cx, y: box.cy };
 		if (!box || !center) return null;
 		var pts = [];
 		if (rawGateGis) {
 			Object.keys(rawGateGis).forEach(function (nm) {
 				var p = rawGateGis[nm];
-				if (p) pts.push(p);
+				if (!p) return;
+				var x = Number(p.x), y = Number(p.y);
+				if (!isFinite(x) || !isFinite(y)) return;
+				pts.push({ x: x, y: y });
 			});
 		}
-		rawShpAll.forEach(function (p) { pts.push(p); });
+		rawShpAll.forEach(function (p) {
+			var x = Number(p.x), y = Number(p.y);
+			if (!isFinite(x) || !isFinite(y)) return;
+			pts.push({ x: x, y: y });
+		});
 		if (!pts.length) return null;
 
 		var gMinX = Infinity, gMaxX = -Infinity, gMinY = Infinity, gMaxY = -Infinity;
 		pts.forEach(function (p) {
-			var x = Number(p.x), y = Number(p.y);
-			if (!isFinite(x) || !isFinite(y)) return;
-			if (x < gMinX) gMinX = x;
-			if (x > gMaxX) gMaxX = x;
-			if (y < gMinY) gMinY = y;
-			if (y > gMaxY) gMaxY = y;
+			if (p.x < gMinX) gMinX = p.x;
+			if (p.x > gMaxX) gMaxX = p.x;
+			if (p.y < gMinY) gMinY = p.y;
+			if (p.y > gMaxY) gMaxY = p.y;
 		});
 		var gdx = Math.max(gMaxX - gMinX, 1e-9);
 		var gdy = Math.max(gMaxY - gMinY, 1e-9);
 		var gcx = (gMinX + gMaxX) / 2;
 		var gcy = (gMinY + gMaxY) / 2;
-		// Uniform fit: GIS extent shrinks into initial topo box (both axes reduced).
 		var sUni = Math.min(box.w / gdx, box.h / gdy);
-		var userScale = readScale();
-		var s = sUni * userScale;
+		var s = sUni * readScale();
 		return {
 			map: function (gx, gy) {
 				return {
 					x: center.x + (gx - gcx) * s,
-					y: center.y + (gy - gcy) * s // keep GIS north-up relative order
+					y: center.y + (gy - gcy) * s
 				};
 			},
 			sUni: sUni,
@@ -583,18 +808,35 @@
 		forceTargets = null;
 		mappedShp = [];
 		if (!mapper) return;
+		// 缩放后图层上画出来的点 = 吸引目标
+		var byShpName = Object.create(null);
+		rawShpAll.forEach(function (p) {
+			var m = mapper.map(Number(p.x), Number(p.y));
+			var entry = { name: p.name, x: m.x, y: m.y };
+			mappedShp.push(entry);
+			if (p.name) byShpName[p.name] = entry;
+		});
 		if (rawGateGis) {
 			forceTargets = {};
 			Object.keys(rawGateGis).forEach(function (nm) {
 				var p = rawGateGis[nm];
 				if (!p) return;
-				forceTargets[nm] = mapper.map(Number(p.x), Number(p.y));
+				var shpNm = String(p.shpName || nm).trim();
+				var shown = (shpNm && byShpName[shpNm]) || byShpName[nm];
+				if (shown) {
+					forceTargets[nm] = { x: shown.x, y: shown.y, shpName: shown.name };
+					return;
+				}
+				var m = mapper.map(Number(p.x), Number(p.y));
+				forceTargets[nm] = { x: m.x, y: m.y, shpName: shpNm || nm };
 			});
 		}
-		rawShpAll.forEach(function (p) {
-			var m = mapper.map(Number(p.x), Number(p.y));
-			mappedShp.push({ name: p.name, x: m.x, y: m.y });
-		});
+		// 初始框 never replaced by SHP extent
+		if (layoutBBox) {
+			initialBBox = layoutBBox;
+			window.__ocisInitialBBox = initialBBox;
+		}
+		spatialFrame = null;
 		window.__ocisSpatialTargets = forceTargets;
 		window.__ocisMappedShp = mappedShp;
 	}
@@ -839,23 +1081,23 @@
 		if (window.__ocisNodeSizeByTag && typeof window.__ocisNodeSizeByTag.sizeScaleFactor === 'function') {
 			sizeF = window.__ocisNodeSizeByTag.sizeScaleFactor() || 1;
 		}
+		var posL = springLengthFromPositions();
 		var freeOn = freeForceTypes && freeForceTypes.size > 0;
 		if (freeOn) {
 			// Free-force needs real springs/repulsion; ultra-soft profile makes “自由力导” look dead.
 			var rep = Math.max(readSpatialRepulse(), 0.025);
 			c.gravitationalConstant = -rep * sizeF;
-			c.springLength = Math.max(12, stubR * 3 + 8) * sizeF;
-			c.springConstant = 0.045;
+			c.springLength = posL > 0 ? posL : Math.max(12, stubR * 3 + 8) * sizeF;
+			c.springConstant = 0;
 			c.centralGravity = 0.004;
 			c.damping = 0.72;
 			c.maxVelocity = 22;
 			c.timestep = 0.4;
 		} else {
-			// Pure hierarchical snap: near-zero spring so 贴靠 / SHP attractors dominate.
-			c.gravitationalConstant = -Math.abs(readSpatialRepulse()) * sizeF;
-			c.springLength = Math.max(1, stubR * 1.02 + 0.5) * sizeF;
-			c.springConstant = 0.0004;
-			c.centralGravity = 0.0005;
+			c.gravitationalConstant = 0;
+			c.springLength = posL > 0 ? posL : Math.max(1, stubR * 1.02 + 0.5) * sizeF;
+			c.springConstant = 0;
+			c.centralGravity = 0;
 			c.damping = 0.85;
 			c.maxVelocity = 28;
 			c.timestep = 0.5;
@@ -868,7 +1110,8 @@
 		Object.keys(savedPhysics).forEach(function (k) {
 			g.layout.config[k] = savedPhysics[k];
 		});
-		// Re-apply size→spacing after leaving spatial soften.
+		syncGpuSpringFromPositions();
+		disableGlobalSprings();
 		if (window.__ocisNodeSizeByTag && typeof window.__ocisNodeSizeByTag.syncSpacing === 'function') {
 			window.__ocisNodeSizeByTag.syncSpacing();
 		}
@@ -886,6 +1129,420 @@
 		if (!node) return '';
 		var props = node.properties || {};
 		return String(props.name || props.title || '').trim();
+	}
+
+	function nodePosOf(graph, id) {
+		var x = graph.positions[id * 2];
+		var y = graph.positions[id * 2 + 1];
+		if (!isFinite(x) || !isFinite(y)) return null;
+		return { x: x, y: y };
+	}
+
+	function writePos(graph, id, x, y) {
+		if (!graph || !isFinite(x) || !isFinite(y)) return;
+		if (typeof graph.setNodePosition === 'function') graph.setNodePosition(id, x, y);
+		else {
+			graph.positions[id * 2] = x;
+			graph.positions[id * 2 + 1] = y;
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+		}
+	}
+
+	var savedZoomMin = null;
+
+	function allowCameraForShp() {
+		var g = gObj();
+		if (!g || !g.camera || !forceTargets) return;
+		var names = Object.keys(forceTargets);
+		if (names.length < 2) return;
+		var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+		names.forEach(function (nm) {
+			var p = forceTargets[nm];
+			if (!p) return;
+			if (p.x < minX) minX = p.x;
+			if (p.x > maxX) maxX = p.x;
+			if (p.y < minY) minY = p.y;
+			if (p.y > maxY) maxY = p.y;
+		});
+		var w = Math.max(maxX - minX, 1) * 1.3;
+		var h = Math.max(maxY - minY, 1) * 1.3;
+		var cam = g.camera;
+		var need = Math.min(
+			2 * 0.85 * (cam.aspectRatio || 1) / w,
+			2 * 0.85 / h
+		);
+		if (!(need > 0) || !isFinite(need)) return;
+		if (savedZoomMin == null) savedZoomMin = cam.zoomMin;
+		cam.zoomMin = Math.min(cam.zoomMin, need * 0.45);
+	}
+
+	function restoreCameraZoomMin() {
+		var g = gObj();
+		if (g && g.camera && savedZoomMin != null) g.camera.zoomMin = savedZoomMin;
+		savedZoomMin = null;
+	}
+
+	function fitGraphView() {
+		var g = gObj();
+		if (!g) return;
+		// 初始框尺度下默认相机足够；缩放>1 才放宽 zoomMin
+		if (readScale() > 1.05) allowCameraForShp();
+		if (typeof g.fitView === 'function') g.fitView(0.15);
+	}
+
+	function gisMinPair(pts) {
+		var minD = Infinity;
+		var i, j, d;
+		for (i = 0; i < pts.length; i++) {
+			for (j = i + 1; j < pts.length; j++) {
+				d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+				if (d > 1e-6 && d < minD) minD = d;
+			}
+		}
+		return minD;
+	}
+
+	function distPts(a, b) {
+		var dx = a.x - b.x;
+		var dy = a.y - b.y;
+		return Math.sqrt(dx * dx + dy * dy);
+	}
+
+	function edgeIsIndirect(e) {
+		if (!e) return false;
+		var tag = String(e.tag || '').toLowerCase();
+		var ctype = String((e.properties && e.properties.ConnectionType) || tag || '').toLowerCase();
+		return ctype === 'indirect' || tag === 'indirect';
+	}
+
+	function nameIndex(graph) {
+		var byName = Object.create(null);
+		graph.activeNodeIds().forEach(function (id) {
+			var node = graph.getNode(id);
+			var name = nodeDisplayName(node);
+			if (name) byName[name] = node;
+		});
+		return byName;
+	}
+
+	/** Attract targets = currently displayed SHP markers (after 缩放/scaleCenter). */
+	function shpTargetMap() {
+		var map = Object.create(null);
+		if (forceTargets) {
+			Object.keys(forceTargets).forEach(function (name) {
+				var p = forceTargets[name];
+				if (p && isFinite(p.x) && isFinite(p.y)) map[name] = p;
+			});
+		}
+		return map;
+	}
+
+	function isShpAnchorNode(node) {
+		if (!node || isCanalNode(node)) return false;
+		var name = nodeDisplayName(node);
+		if (!name) return false;
+		if (forceTargets && forceTargets[name]) return true;
+		if (!mappedShp || !mappedShp.length) return false;
+		for (var i = 0; i < mappedShp.length; i++) {
+			if (mappedShp[i] && mappedShp[i].name === name) return true;
+		}
+		return false;
+	}
+
+	function unpinNodeId(g, id) {
+		if (!g) return;
+		if (typeof g.unpinNode === 'function') g.unpinNode(id);
+		else if (g.layout && g.layout.pinned && g.layout.pinned.delete) g.layout.pinned.delete(id);
+	}
+
+	function pinNodeId(g, id) {
+		if (!g) return;
+		if (typeof g.pinNode === 'function') g.pinNode(id);
+		else if (g.layout && g.layout.pinned && g.layout.pinned.add) g.layout.pinned.add(id);
+	}
+
+	function unpinAllNodes() {
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph) return;
+		graph.activeNodeIds().forEach(function (id) { unpinNodeId(g, id); });
+		frozenPos = Object.create(null);
+	}
+
+	/** Mean SHP displacement this frame — followers use this so the graph moves with GIS. */
+	var lastShpDelta = { x: 0, y: 0 };
+
+	/**
+	 * SHP is the root constraint. Write matched 节制/水源 onto mapped GIS after (and
+	 * before) GPU tick — otherwise origTick restores force-layout positions.
+	 */
+	function placeShpAnchors() {
+		if (!spatialActive || !forceKindOn('shp')) {
+			lastShpDelta = { x: 0, y: 0 };
+			return 0;
+		}
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph) {
+			lastShpDelta = { x: 0, y: 0 };
+			return 0;
+		}
+		var vel = g.layout && g.layout.velocities;
+		var anchors = shpTargetMap();
+		var byName = nameIndex(graph);
+		var gain = readAttractK();
+		// 吸引线有力：每帧按剩余距离拉近（力度越大越快），贴到 0.05 内直接吸附到显示点。
+		var alpha = Math.min(0.6, 0.02 + gain * 0.08);
+		var n = 0;
+		var sx = 0, sy = 0;
+		Object.keys(anchors).forEach(function (name) {
+			var node = byName[name];
+			if (!node || isCanalNode(node)) return;
+			var sk = strengthKeyForNode(node);
+			if (allowFreeForce(sk) || allowFreeForce('other')) return;
+			var tgt = anchors[name];
+			var x = graph.positions[node.id * 2];
+			var y = graph.positions[node.id * 2 + 1];
+			if (!isFinite(x) || !isFinite(y) || !tgt || !isFinite(tgt.x) || !isFinite(tgt.y)) return;
+			var dx = tgt.x - x;
+			var dy = tgt.y - y;
+			var dist = Math.sqrt(dx * dx + dy * dy);
+			var nx, ny;
+			if (dist < 0.05) {
+				nx = tgt.x;
+				ny = tgt.y;
+			} else {
+				nx = x + dx * alpha;
+				ny = y + dy * alpha;
+			}
+			sx += nx - x;
+			sy += ny - y;
+			writePos(graph, node.id, nx, ny);
+			if (vel) {
+				vel[node.id * 2] = 0;
+				vel[node.id * 2 + 1] = 0;
+			}
+			pinNodeId(g, node.id);
+			n += 1;
+		});
+		lastShpDelta = n ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
+		if (n) {
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+			if (typeof g.markDirty === 'function') g.markDirty();
+		}
+		return n;
+	}
+
+	/** Everyone except SHP anchors follows the mean SHP move, then canals snap to ends. */
+	function applyFollowShp() {
+		if (!spatialActive) return 0;
+		var dx = lastShpDelta.x;
+		var dy = lastShpDelta.y;
+		if (!isFinite(dx) || !isFinite(dy)) return 0;
+		if (Math.abs(dx) < 1e-8 && Math.abs(dy) < 1e-8) return 0;
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph) return 0;
+		var vel = g.layout && g.layout.velocities;
+		var stubParents = forceKindOn('stub') && !allowFreeForce('stub') ? buildStubParents(graph) : Object.create(null);
+		var n = 0;
+		graph.activeNodeIds().forEach(function (id) {
+			var node = graph.getNode(id);
+			if (!node) return;
+			if (isShpAnchorNode(node)) return;
+			if (stubParents[id] != null && !isCanalNode(node)) return;
+			writePos(graph, id, graph.positions[id * 2] + dx, graph.positions[id * 2 + 1] + dy);
+			if (vel) {
+				vel[id * 2] = 0;
+				vel[id * 2 + 1] = 0;
+			}
+			unpinNodeId(g, id);
+			n += 1;
+		});
+		if (n) {
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+		}
+		return n;
+	}
+
+	function placeCanalFollowers() {
+		if (!spatialActive || !forceKindOn('canal') || allowFreeForce('canal')) return 0;
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph) return 0;
+		var vel = g.layout && g.layout.velocities;
+		var byName = nameIndex(graph);
+		var n = 0;
+		graph.activeNodeIds().forEach(function (id) {
+			var node = graph.getNode(id);
+			if (!isCanalNode(node)) return;
+			var props = node.properties || {};
+			var sNode = byName[String(props.source || '').trim()];
+			var tNode = byName[String(props.target || '').trim()];
+			if (!sNode || !tNode) return;
+			var sx = graph.positions[sNode.id * 2];
+			var sy = graph.positions[sNode.id * 2 + 1];
+			var tx = graph.positions[tNode.id * 2];
+			var ty = graph.positions[tNode.id * 2 + 1];
+			if (![sx, sy, tx, ty].every(isFinite)) return;
+			writePos(graph, id, (sx + tx) * 0.5, (sy + ty) * 0.5);
+			if (vel) {
+				vel[id * 2] = 0;
+				vel[id * 2 + 1] = 0;
+			}
+			unpinNodeId(g, id);
+			n += 1;
+		});
+		if (n) {
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+		}
+		return n;
+	}
+
+	function canalEndSpan(graph, canalNode, byName) {
+		if (!canalNode) return 0;
+		var props = canalNode.properties || {};
+		var a = byName[String(props.source || '').trim()];
+		var b = byName[String(props.target || '').trim()];
+		if (!a || !b) return 0;
+		var pa = nodePosOf(graph, a.id);
+		var pb = nodePosOf(graph, b.id);
+		if (!pa || !pb) return 0;
+		return distPts(pa, pb);
+	}
+
+	/**
+	 * Per-edge rest length from current node positions.
+	 * 渠段: half the distance between its two end nodes (updates as gates move).
+	 * direct: stub ring when 内边界吸引 is on, else current length.
+	 */
+	function restLengthForEdge(graph, e, byName) {
+		var sNode = graph.getNode(e.source);
+		var tNode = graph.getNode(e.target);
+		var ps = nodePosOf(graph, e.source);
+		var pt = nodePosOf(graph, e.target);
+		var cur = ps && pt ? distPts(ps, pt) : 0;
+		if (edgeIsIndirect(e) || isCanalNode(sNode) || isCanalNode(tNode)) {
+			var canal = isCanalNode(sNode) ? sNode : (isCanalNode(tNode) ? tNode : null);
+			if (canal) {
+				var span = canalEndSpan(graph, canal, byName);
+				if (span > 1) return span * 0.5;
+			}
+			return cur > 0 ? cur : 0;
+		}
+		if (forceKindOn('stub') && !allowFreeForce('stub')) {
+			return Math.max(readStubRadius(), 1.5);
+		}
+		return cur > 0 ? cur : 0;
+	}
+
+	function medianOf(values) {
+		if (!values.length) return 0;
+		values.sort(function (a, b) { return a - b; });
+		var m = Math.floor(values.length / 2);
+		if (values.length % 2) return values[m];
+		return (values[m - 1] + values[m]) * 0.5;
+	}
+
+	/** GPU has one springLength; drive it from current 渠段/indirect spacing (never a fixed 55). */
+	function springLengthFromPositions() {
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!graph || typeof graph.activeEdgeIds !== 'function') return 0;
+		var byName = nameIndex(graph);
+		var canalRests = [];
+		var allRests = [];
+		graph.activeEdgeIds().forEach(function (eid) {
+			var e = graph.getEdge(eid);
+			if (!e) return;
+			var L = restLengthForEdge(graph, e, byName);
+			if (!(L > 0) || !isFinite(L)) return;
+			allRests.push(L);
+			if (edgeIsIndirect(e) || isCanalNode(graph.getNode(e.source)) || isCanalNode(graph.getNode(e.target))) {
+				canalRests.push(L);
+			}
+		});
+		var med = medianOf(canalRests.length ? canalRests : allRests);
+		if (!(med > 0) || !isFinite(med)) return 0;
+		return Math.max(2, Math.min(800, med));
+	}
+
+	function syncGpuSpringFromPositions() {
+		var g = gObj();
+		if (!g || !g.layout || !g.layout.config) return 0;
+		var L = springLengthFromPositions();
+		if (!(L > 0)) return 0;
+		g.layout.config.springLength = L;
+		window.__ocisBaseSpringLength = L;
+		return L;
+	}
+
+	/** CPU Hooke springs with per-edge rest from node positions (GPU cannot). */
+	function applyPerEdgeSprings() {
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph || !g.layout) return 0;
+		var vel = g.layout.velocities;
+		var byName = nameIndex(graph);
+		var k = 0.07;
+		var n = 0;
+		graph.activeEdgeIds().forEach(function (eid) {
+			var e = graph.getEdge(eid);
+			if (!e) return;
+			if (!edgeIsIndirect(e) && forceKindOn('stub') && !allowFreeForce('stub')) return;
+			var rest = restLengthForEdge(graph, e, byName);
+			if (!(rest > 0)) return;
+			var ps = nodePosOf(graph, e.source);
+			var pt = nodePosOf(graph, e.target);
+			if (!ps || !pt) return;
+			var d = distPts(ps, pt);
+			if (!(d > 1e-4)) return;
+			var stretch = d - rest;
+			if (Math.abs(stretch) < 0.15) return;
+			var ux = (pt.x - ps.x) / d;
+			var uy = (pt.y - ps.y) / d;
+			var mag = stretch * k;
+			var sNode = graph.getNode(e.source);
+			var tNode = graph.getNode(e.target);
+			var srcShp = spatialActive && isShpAnchorNode(sNode);
+			var tgtShp = spatialActive && isShpAnchorNode(tNode);
+			if (srcShp && tgtShp) return;
+			var ws = 0.5;
+			var wt = 0.5;
+			if (srcShp) {
+				ws = 0;
+				wt = 1;
+			} else if (tgtShp) {
+				ws = 1;
+				wt = 0;
+			} else if (isCanalNode(sNode) && !isCanalNode(tNode)) {
+				ws = 0.85;
+				wt = 0.15;
+			} else if (isCanalNode(tNode) && !isCanalNode(sNode)) {
+				ws = 0.15;
+				wt = 0.85;
+			}
+			graph.positions[e.source * 2] = ps.x + ux * mag * ws;
+			graph.positions[e.source * 2 + 1] = ps.y + uy * mag * ws;
+			graph.positions[e.target * 2] = pt.x - ux * mag * wt;
+			graph.positions[e.target * 2 + 1] = pt.y - uy * mag * wt;
+			if (vel) {
+				vel[e.source * 2] *= 0.7;
+				vel[e.source * 2 + 1] *= 0.7;
+				vel[e.target * 2] *= 0.7;
+				vel[e.target * 2 + 1] *= 0.7;
+			}
+			n += 1;
+		});
+		if (n) {
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+		}
+		return n;
 	}
 
 	/**
@@ -918,6 +1575,78 @@
 		return parentOf;
 	}
 
+	function resolveStubAttractId(g, graph, stubId, parentId) {
+		var attractId = parentId;
+		if (!isCanalNode(graph.getNode(attractId))) {
+			var related = typeof g.related === 'function' ? g.related(attractId) : [];
+			for (var ri = 0; ri < (related || []).length; ri++) {
+				if (isCanalNode(related[ri])) {
+					attractId = related[ri].id;
+					break;
+				}
+			}
+		}
+		if (!isCanalNode(graph.getNode(attractId))) {
+			var stubRel = typeof g.related === 'function' ? g.related(stubId) : [];
+			for (var rj = 0; rj < (stubRel || []).length; rj++) {
+				if (isCanalNode(stubRel[rj])) {
+					attractId = stubRel[rj].id;
+					break;
+				}
+			}
+		}
+		return attractId;
+	}
+
+	/**
+	 * After GPU springs (global rest-length ~55 on every edge, including direct),
+	 * snap 内边界 back onto a short ring around their canal/gate. Runs even when
+	 * 空间分布 is off — otherwise laterals starburst along direct edges forever.
+	 */
+	function applyStubAttraction() {
+		if (!forceKindOn('stub') || allowFreeForce('stub')) return 0;
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph || !g.layout) return 0;
+		var vel = g.layout.velocities;
+		var parentOf = buildStubParents(graph);
+		var rad = Math.max(readStubRadius(), 1.5);
+		var maxLen = Math.max(rad * 1.35, 3);
+		var n = 0;
+		Object.keys(parentOf).forEach(function (stubIdStr) {
+			var stubId = Number(stubIdStr);
+			var stub = graph.getNode(stubId);
+			if (!stub || isCanalNode(stub)) return;
+			if (forceTargets && forceTargets[nodeDisplayName(stub)]) return;
+			var attractId = resolveStubAttractId(g, graph, stubId, parentOf[stubId]);
+			var ax = graph.positions[attractId * 2];
+			var ay = graph.positions[attractId * 2 + 1];
+			var sx0 = graph.positions[stubId * 2];
+			var sy0 = graph.positions[stubId * 2 + 1];
+			if (![ax, ay, sx0, sy0].every(isFinite)) return;
+			var name = nodeDisplayName(stub) || String(stubId);
+			var ang = ((name.length * 37 + stubId * 17) % 360) * Math.PI / 180;
+			var tx = ax + Math.cos(ang) * rad;
+			var ty = ay + Math.sin(ang) * rad;
+			var dx = tx - sx0;
+			var dy = ty - sy0;
+			var dist = Math.sqrt(dx * dx + dy * dy);
+			if (!isFinite(dist) || dist < 1e-6) return;
+			writePos(graph, stubId, tx, ty);
+			if (vel) {
+				vel[stubId * 2] = 0;
+				vel[stubId * 2 + 1] = 0;
+			}
+			n += 1;
+		});
+		if (n) {
+			graph.dirtyNodes = true;
+			graph.dirtyEdges = true;
+			if (typeof g.markDirty === 'function') g.markDirty();
+		}
+		return n;
+	}
+
 	function pullToward(vel, pinned, g, node, tx, ty, k, softPos) {
 		if (!node || !isFinite(tx) || !isFinite(ty)) return false;
 		if (pinned && pinned.has(node.id)) {
@@ -944,141 +1673,77 @@
 	}
 
 	/**
-	 * Hierarchy:
-	 *   SHP → 节制闸(type=4) + 水源(type=0)
-	 *   闸/水源 → 渠段 (midpoint；边长随两端距离变化)
-	 *   渠段 → 内边界 stub (分水等) 强力靠近渠段
+	 * 吸引虚线对应的力：把 link 起点拉向终点（与 collectAttractLinks 同一套）。
+	 * SHP 线：闸 → 缩放后显示的 SHP 点。
+	 */
+	function applyAttractLinkForces() {
+		if (!spatialActive) return 0;
+		var g = gObj();
+		var graph = graphOf(g);
+		if (!g || !graph || !g.layout || !g.layout.velocities) return 0;
+		var vel = g.layout.velocities;
+		var pinned = g.layout.pinned;
+		var gain = readAttractK();
+		var links = collectAttractLinks();
+		var n = 0;
+		links.forEach(function (link) {
+			if (link.kind === 'shp') {
+				// endpoint is displayed SHP marker; find node at x0,y0 by nearest name via forceTargets
+				return;
+			}
+			if (link.kind === 'canal' && !allowFreeForce('canal')) {
+				// canal node at (x0,y0) already handled by placeCanalFollowers
+				return;
+			}
+			if (link.kind === 'stub' && !allowFreeForce('stub')) {
+				return;
+			}
+		});
+		// SHP: explicit strong pull (虚线有力)
+		if (forceKindOn('shp')) {
+			var anchors = shpTargetMap();
+			var byName = nameIndex(graph);
+			var k = Math.max(0.8, readStrengthFor('type-4') * gain);
+			var soft = Math.min(0.6, 0.02 + gain * 0.08);
+			Object.keys(anchors).forEach(function (name) {
+				var node = byName[name];
+				var tgt = anchors[name];
+				if (!node || !tgt || isCanalNode(node)) return;
+				var sk = strengthKeyForNode(node);
+				if (allowFreeForce(sk) || allowFreeForce('other')) return;
+				if (pullToward(vel, pinned, g, node, tgt.x, tgt.y, k, soft)) n += 1;
+			});
+		}
+		return n;
+	}
+
+	/**
+	 * Hierarchy after GPU tick (SHP first; everyone follows):
+	 *   1. 闸 → 缩放后显示的 SHP 点（吸引线有力）
+	 *   2. 其余随 SHP 平移
+	 *   3. 渠段 → 两端中点
+	 *   4. 内边界 → 渠段短环
 	 */
 	function applyHierarchicalAttractors() {
 		if (!spatialActive) return 0;
 		var g = gObj();
 		var graph = graphOf(g);
-		if (!g || !graph || !g.layout || !g.layout.velocities) return 0;
+		if (!g || !graph) return 0;
+		disableGlobalSprings();
 		softenPhysicsForSpatial();
-		var vel = g.layout.velocities;
-		var pinned = g.layout.pinned;
-		var stubPullMul = readStubPull();
-		var stubSnap = readStubSnap();
-		var kCanal = readStrengthFor('canal');
-		var kStub = readStrengthFor('stub') * stubPullMul;
-		var anchorSet = forceTargets ? forceTargets : {};
-		var byName = Object.create(null);
-		var nodes = [];
-		graph.activeNodeIds().forEach(function (id) {
-			var node = graph.getNode(id);
-			if (!node) return;
-			nodes.push(node);
-			var name = nodeDisplayName(node);
-			if (name) byName[name] = node;
-		});
-
-		var n = 0;
-		var gateHits = 0;
-		var gateMiss = 0;
-		// 1) SHP → 已匹配的 节制/水源；勾选对应类型「自由力导」则跳过 SHP 吸引
-		Object.keys(anchorSet).forEach(function (name) {
-			var node = byName[name];
-			if (!node) {
-				gateMiss += 1;
-				return;
-			}
-			if (isCanalNode(node)) return;
-			var sk = strengthKeyForNode(node);
-			if (allowFreeForce(sk) || allowFreeForce('other')) return;
-			var tgt = anchorSet[name];
-			var kGate = readStrengthFor(sk);
-			var gateSoft = Math.min(0.35, 0.06 + kGate * 0.04);
-			if (tgt && pullToward(vel, pinned, g, node, tgt.x, tgt.y, kGate, gateSoft)) {
-				n += 1;
-				gateHits += 1;
-			}
-		});
-
-		// 2) 闸/水源 → 渠段中点（主干边长自由；若勾选「渠段」自由力导则跳过）
-		if (!allowFreeForce('canal')) {
-			nodes.forEach(function (node) {
-				if (!isCanalNode(node)) return;
-				var props = node.properties || {};
-				var sNode = byName[String(props.source || '').trim()];
-				var tNode = byName[String(props.target || '').trim()];
-				if (!sNode || !tNode) return;
-				var sx = graph.positions[sNode.id * 2];
-				var sy = graph.positions[sNode.id * 2 + 1];
-				var tx = graph.positions[tNode.id * 2];
-				var ty = graph.positions[tNode.id * 2 + 1];
-				if (![sx, sy, tx, ty].every(isFinite)) return;
-				var canalSoft = Math.min(0.4, 0.08 + kCanal * 0.05);
-				if (pullToward(vel, pinned, g, node, (sx + tx) * 0.5, (sy + ty) * 0.5, kCanal, canalSoft)) n += 1;
-			});
-		}
-
-		// 3) 渠段 → 内边界(分水等)：未勾选「分水/内边界」自由力导时贴短
-		if (!allowFreeForce('stub')) {
-		var parentOf = buildStubParents(graph);
-		var rad = readStubRadius();
-		var maxStubLen = Math.max(rad * 1.5, 3);
-		Object.keys(parentOf).forEach(function (stubIdStr) {
-			var stubId = Number(stubIdStr);
-			var parentId = parentOf[stubId];
-			var stub = graph.getNode(stubId);
-			var parent = graph.getNode(parentId);
-			if (!stub || !parent) return;
-			if (isCanalNode(stub)) return;
-			// Skip SHP anchors — they follow shp, not canal clustering
-			if (forceTargets && forceTargets[nodeDisplayName(stub)]) return;
-
-			var attractId = parentId;
-			if (!isCanalNode(parent)) {
-				var related = typeof g.related === 'function' ? g.related(parentId) : [];
-				for (var ri = 0; ri < (related || []).length; ri++) {
-					if (isCanalNode(related[ri])) {
-						attractId = related[ri].id;
-						break;
-					}
-				}
-			}
-			// Prefer canal: if still not canal, use geometric nearest 渠段 among neighbors of stub
-			if (!isCanalNode(graph.getNode(attractId))) {
-				var stubRel = typeof g.related === 'function' ? g.related(stubId) : [];
-				for (var rj = 0; rj < (stubRel || []).length; rj++) {
-					if (isCanalNode(stubRel[rj])) {
-						attractId = stubRel[rj].id;
-						break;
-					}
-				}
-			}
-			var ax = graph.positions[attractId * 2];
-			var ay = graph.positions[attractId * 2 + 1];
-			if (!isFinite(ax) || !isFinite(ay)) return;
-			var sx0 = graph.positions[stubId * 2];
-			var sy0 = graph.positions[stubId * 2 + 1];
-			if (!isFinite(sx0) || !isFinite(sy0)) return;
-			var name = nodeDisplayName(stub) || String(stubId);
-			var ang = ((name.length * 37 + stubId * 17) % 360) * Math.PI / 180;
-			var tx = ax + Math.cos(ang) * rad;
-			var ty = ay + Math.sin(ang) * rad;
-			var dist = Math.sqrt((tx - sx0) * (tx - sx0) + (ty - sy0) * (ty - sy0));
-			// 贴靠瞬移 is the main amplitude knob; far stubs get near-hard snap.
-			var soft = Math.min(1, stubSnap);
-			if (dist > maxStubLen) soft = Math.min(1, Math.max(soft, 0.85));
-			var k = dist > maxStubLen ? kStub * 1.6 : kStub;
-			if (pullToward(vel, pinned, g, stub, tx, ty, k, soft)) {
-				var i2 = stubId * 2;
-				vel[i2] *= 0.08;
-				vel[i2 + 1] *= 0.08;
-				n += 1;
-			}
-		});
-		}
-
-		// 钉住未匹配且未允许自由力导的节点（一干渠尾、出口节制闸等）
-		applyFrozenNodes();
-		if (gateHits === 0 && forceTargets && Object.keys(forceTargets).length) {
-			if (!applyHierarchicalAttractors._warned) {
-				console.warn('spatial attract: no anchor hits', {
-					targets: Object.keys(forceTargets).slice(0, 8),
-					miss: gateMiss,
-					sampleNodeNames: Object.keys(byName).slice(0, 8)
+		var n = applyAttractLinkForces();
+		n += placeShpAnchors();
+		n += applyFollowShp();
+		n += placeCanalFollowers();
+		applyPerEdgeSprings();
+		n += placeCanalFollowers();
+		n += applyStubAttraction();
+		if (forceKindOn('shp') && n === 0) {
+			var anchors = shpTargetMap();
+			if (anchors && Object.keys(anchors).length && !applyHierarchicalAttractors._warned) {
+				console.warn('spatial attract: no SHP hits', {
+					targets: Object.keys(anchors).slice(0, 8),
+					sampleNodeNames: Object.keys(nameIndex(graph)).slice(0, 8)
 				});
 				applyHierarchicalAttractors._warned = true;
 			}
@@ -1093,21 +1758,35 @@
 		if (!layout.__ocisAttractorWrapped) {
 			var origTick = layout.tick.bind(layout);
 			layout.tick = function () {
-				applyHierarchicalAttractors();
-				return origTick();
+				disableGlobalSprings();
+				syncGpuSpringFromPositions();
+				if (spatialActive) placeShpAnchors();
+				var ret = origTick();
+				disableGlobalSprings();
+				if (spatialActive) applyHierarchicalAttractors();
+				else {
+					applyPerEdgeSprings();
+					applyStubAttraction();
+				}
+				return ret;
 			};
 			layout.__ocisAttractorWrapped = true;
 		}
-		// RAF backup: startLayout may replace Sr; keep pulling while active.
+		// RAF backup: startLayout may replace Sr; keep wrapping + stub clamp.
 		if (!window.__ocisSpatialAttractRaf) {
 			var loop = function () {
 				window.__ocisSpatialAttractRaf = 0;
-				if (!spatialActive) return;
 				var gg = gObj();
 				if (gg && gg.layout && !gg.layout.__ocisAttractorWrapped) {
 					hookAttractorTick();
 				}
-				applyHierarchicalAttractors();
+				disableGlobalSprings();
+				syncGpuSpringFromPositions();
+				if (spatialActive) applyHierarchicalAttractors();
+				else {
+					applyPerEdgeSprings();
+					applyStubAttraction();
+				}
 				if (gg && gg.markDirty) gg.markDirty();
 				window.__ocisSpatialAttractRaf = requestAnimationFrame(loop);
 			};
@@ -1118,23 +1797,29 @@
 	function stopSpatialAttract() {
 		spatialActive = false;
 		restorePhysics();
+		unpinAllNodes();
 		clearFrozenNodes();
 		setSpatialButtonActive(false);
-		if (window.__ocisSpatialAttractRaf) {
-			cancelAnimationFrame(window.__ocisSpatialAttractRaf);
-			window.__ocisSpatialAttractRaf = 0;
-		}
 		applyHierarchicalAttractors._warned = false;
+		lastShpDelta = { x: 0, y: 0 };
+		restoreCameraZoomMin();
+		// Keep tick wrap + stub clamp; only GIS hierarchy stops.
 	}
 
 	function startSpatialAttract() {
 		spatialActive = true;
 		applyHierarchicalAttractors._warned = false;
+		disableGlobalSprings();
 		softenPhysicsForSpatial();
-		rebuildFrozenNodes();
+		unpinAllNodes();
 		setSpatialButtonActive(true);
+		showAttractLayer = true;
+		persistFlags();
+		startPaintLoop();
 		hookAttractorTick();
 		applyHierarchicalAttractors();
+		setTimeout(fitGraphView, 80);
+		setTimeout(fitGraphView, 280);
 	}
 
 	function ensureOverlay() {
@@ -1152,7 +1837,7 @@
 		}
 		// Keep above topo-live-overlay (z=6) and graph canvas.
 		overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:12;display:' +
-			((showShpLayer || showScaleCenter) ? 'block' : 'none');
+			(overlayWanted() ? 'block' : 'none');
 		overlay.style.pointerEvents = showScaleCenter ? 'auto' : 'none';
 		if (overlay.parentElement !== host) host.appendChild(overlay);
 		else if (host.lastElementChild !== overlay) host.appendChild(overlay); // restack on top
@@ -1197,7 +1882,7 @@
 	}
 
 	function paintOverlay() {
-		if (!showShpLayer && !showScaleCenter) {
+		if (!overlayWanted()) {
 			if (overlay) overlay.style.display = 'none';
 			return;
 		}
@@ -1278,9 +1963,50 @@
 			}
 		}
 
-		if (initialBBox && (showShpLayer || showScaleCenter)) {
-			var a = worldToCss(initialBBox.minX, initialBBox.minY);
-			var b = worldToCss(initialBBox.maxX, initialBBox.maxY);
+		if (showAttractLayer) {
+			var links = collectAttractLinks();
+			var drawnA = 0;
+			var counts = { shp: 0, canal: 0, stub: 0 };
+			octx.save();
+			links.forEach(function (link) {
+				var a0 = worldToCss(link.x0, link.y0);
+				var a1 = worldToCss(link.x1, link.y1);
+				if (!a0 || !a1) return;
+				if (!isFinite(a0[0]) || !isFinite(a0[1]) || !isFinite(a1[0]) || !isFinite(a1[1])) return;
+				var off =
+					(a0[0] < -40 && a1[0] < -40) ||
+					(a0[1] < -40 && a1[1] < -40) ||
+					(a0[0] > cssW + 40 && a1[0] > cssW + 40) ||
+					(a0[1] > cssH + 40 && a1[1] > cssH + 40);
+				if (off) return;
+				drawnA += 1;
+				if (counts[link.kind] != null) counts[link.kind] += 1;
+				octx.beginPath();
+				octx.moveTo(a0[0], a0[1]);
+				octx.lineTo(a1[0], a1[1]);
+				octx.strokeStyle = FORCE_KIND_COLOR[link.kind] || 'rgba(255,255,255,0.7)';
+				octx.lineWidth = link.kind === 'stub' ? 1.1 : 1.6;
+				octx.setLineDash(link.kind === 'canal' ? [8, 5] : link.kind === 'shp' ? [5, 4] : [3, 4]);
+				octx.stroke();
+			});
+			octx.setLineDash([]);
+			octx.restore();
+			var hudY = showShpLayer ? 40 : 8;
+			octx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+			octx.fillRect(8, hudY, 220, 28);
+			octx.fillStyle = '#a5b4fc';
+			octx.font = '12px "Microsoft YaHei", sans-serif';
+			octx.fillText(
+				'吸引 · ' + drawnA + '  SHP ' + counts.shp + '  渠 ' + counts.canal + '  内 ' + counts.stub,
+				16,
+				hudY + 18
+			);
+		}
+
+		var frameBox = layoutBBox || initialBBox;
+		if (frameBox && (showShpLayer || showScaleCenter)) {
+			var a = worldToCss(frameBox.minX, frameBox.minY);
+			var b = worldToCss(frameBox.maxX, frameBox.maxY);
 			if (a && b) {
 				octx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
 				octx.setLineDash([6, 4]);
@@ -1387,7 +2113,11 @@
 				if (!p) return;
 				var x = Number(p.x), y = Number(p.y);
 				if (!isFinite(x) || !isFinite(y)) return;
-				rawGateGis[nm] = { x: x, y: y };
+				rawGateGis[nm] = {
+					x: x,
+					y: y,
+					shpName: String(p.shpName || nm).trim()
+				};
 			});
 
 			rawShpAll = [];
@@ -1461,6 +2191,7 @@
 		writeScale(readScale(), true);
 		rebuildMapped();
 		applyHierarchicalAttractors();
+		fitGraphView();
 	}
 
 	function onStrengthUserChange() {
@@ -1517,6 +2248,13 @@
 		loadStrengthByType();
 		syncSpatialForceUi();
 		loadFreeForceTypes();
+		loadForceKinds();
+		try {
+			var savedK = Number(localStorage.getItem(ATTRACT_K_KEY));
+			writeAttractK(isFinite(savedK) && savedK > 0 ? savedK : 1, false);
+		} catch (eK) {
+			writeAttractK(1, false);
+		}
 		syncToggleUi();
 
 		document.addEventListener('click', function (ev) {
@@ -1532,6 +2270,12 @@
 				ev.preventDefault();
 				ev.stopPropagation();
 				setShpVisible(!showShpLayer);
+				return;
+			}
+			if (t.closest('#ocisAttractLayerBtn') || t.closest('#ocisToggleAttractLayer')) {
+				ev.preventDefault();
+				ev.stopPropagation();
+				setAttractVisible(!showAttractLayer);
 				return;
 			}
 			if (t.closest('#ocisToggleScaleCenter')) {
@@ -1550,6 +2294,10 @@
 			if (freeWrap && freeWrap.open && !t.closest('#ocisFreeForceWrap')) {
 				freeWrap.open = false;
 			}
+			var kindWrap = document.getElementById('ocisForceKindWrap');
+			if (kindWrap && kindWrap.open && !t.closest('#ocisForceKindWrap')) {
+				kindWrap.open = false;
+			}
 			if (t.closest('.toolbar .btn') && /settings/i.test(t.closest('.toolbar .btn').textContent || '')) {
 				setTimeout(function () {
 					syncToggleUi();
@@ -1563,6 +2311,11 @@
 			if (!inp || !inp.getAttribute) return;
 			if (inp.id === 'ocisSpatialScale') {
 				onScaleUserChange();
+				return;
+			}
+			if (inp.id === 'ocisAttractK') {
+				writeAttractK(Number(inp.value), true);
+				applyHierarchicalAttractors();
 				return;
 			}
 			if (inp.id === 'ocisStrengthType') {
@@ -1580,15 +2333,25 @@
 				onParamUserChange(paramName);
 				return;
 			}
+			var forceKind = inp.getAttribute('data-force-kind');
+			if (forceKind && inp.closest('#ocisForceKindMenu')) {
+				if (inp.checked) forceKinds.add(forceKind);
+				else forceKinds.delete(forceKind);
+				persistForceKinds();
+				if (showAttractLayer) startPaintLoop();
+				hookAttractorTick();
+				applyStubAttraction();
+				if (spatialActive) applyHierarchicalAttractors();
+				return;
+			}
 			var key = inp.getAttribute('data-free');
 			if (!key || !inp.closest('#ocisFreeForceMenu')) return;
 			if (inp.checked) freeForceTypes.add(key);
 			else freeForceTypes.delete(key);
 			persistFreeForceTypes();
 			if (spatialActive) {
-				clearFrozenNodes();
+				unpinAllNodes();
 				softenPhysicsForSpatial();
-				rebuildFrozenNodes();
 				applyHierarchicalAttractors();
 				// Ensure layout loop is running so free nodes can actually move.
 				var gg = gObj();
@@ -1605,6 +2368,11 @@
 				onScaleUserChange();
 				return;
 			}
+			if (ev.target.id === 'ocisAttractK') {
+				writeAttractK(Number(ev.target.value), true);
+				applyHierarchicalAttractors();
+				return;
+			}
 			var maxName = ev.target.getAttribute('data-spatial-max');
 			if (maxName && SPATIAL_PARAMS[maxName]) {
 				onParamMaxUserChange(maxName);
@@ -1614,6 +2382,15 @@
 			if (paramName && SPATIAL_PARAMS[paramName]) onParamUserChange(paramName);
 		});
 		document.addEventListener('wheel', function (ev) {
+			var kWrap = ev.target && ev.target.closest && ev.target.closest('#ocisAttractKWrap');
+			if (kWrap) {
+				ev.preventDefault();
+				ev.stopPropagation();
+				var kStep = ev.shiftKey ? 0.2 : 0.05;
+				writeAttractK(readAttractK() + (ev.deltaY < 0 ? kStep : -kStep), true);
+				applyHierarchicalAttractors();
+				return;
+			}
 			var wrap = ev.target && ev.target.closest && ev.target.closest('#ocisSpatialScaleWrap');
 			if (!wrap) return;
 			ev.preventDefault();
@@ -1628,14 +2405,32 @@
 		var tries = 0;
 		var timer = setInterval(function () {
 			tries += 1;
-			if (captureInitialBBox(false) || tries > 80) clearInterval(timer);
+			captureInitialBBox(false);
+			hookAttractorTick();
+			applyStubAttraction();
+			if (tries > 80) clearInterval(timer);
 		}, 250);
+
+		var kindWrapEl = document.getElementById('ocisForceKindWrap');
+		if (kindWrapEl) {
+			kindWrapEl.addEventListener('toggle', function () {
+				if (kindWrapEl.open) syncForceKindUi();
+			});
+		}
+		[0, 200, 800].forEach(function (ms) {
+			setTimeout(function () {
+				syncForceKindUi();
+				syncToggleUi();
+				hookAttractorTick();
+				applyStubAttraction();
+			}, ms);
+		});
 	}
 
 	wireUi();
-	if (showShpLayer || showScaleCenter) {
+	if (overlayWanted()) {
 		startPaintLoop();
-		if (showShpLayer) ensureShpData();
+		if (showShpLayer || (showAttractLayer && forceKindOn('shp'))) ensureShpData();
 	}
 
 	window.__ocisSpatial = {
@@ -1643,11 +2438,17 @@
 		rebuild: rebuildMapped,
 		rehook: function () {
 			hookAttractorTick();
+			disableGlobalSprings();
+			syncGpuSpringFromPositions();
 			if (spatialActive) {
 				softenPhysicsForSpatial();
-				rebuildFrozenNodes();
+				applyHierarchicalAttractors();
 			}
+			applyPerEdgeSprings();
+			applyStubAttraction();
 		},
+		springLengthFromPositions: springLengthFromPositions,
+		syncGpuSpringFromPositions: syncGpuSpringFromPositions,
 		stop: stopSpatialAttract,
 		isActive: function () { return spatialActive; },
 		resetScaleCenter: resetScaleCenter,
@@ -1656,6 +2457,9 @@
 		getScaleCenter: function () { return scaleCenter; },
 		setShowShpLayer: function (on) {
 			setShpVisible(!!on);
+		},
+		setShowAttractLayer: function (on) {
+			setAttractVisible(!!on);
 		},
 		ensureShpData: ensureShpData,
 		setShowScaleCenter: function (on) {
