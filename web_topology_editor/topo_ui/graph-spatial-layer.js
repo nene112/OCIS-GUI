@@ -7,7 +7,7 @@
  * - Optional SHP layer draws mapped shp positions.
  */
 (function graphSpatialLayer() {
-	console.log('[topo-spatial BUILD] 20261007-1335 smooth-attract');
+	console.log('[topo-spatial BUILD] 20261007-1340 default-layers-on');
 	var SCALE_KEY = 'ocisSpatialScale';
 	var STRENGTH_KEY = 'ocisSpatialStrength';
 	var STRENGTH_BY_TYPE_KEY = 'ocisSpatialStrengthByType';
@@ -55,8 +55,10 @@
 	var mappedShp = [];
 
 	var showScaleCenter = false;
-	var showShpLayer = false;
-	var showAttractLayer = false;
+	// SHP 图层 / 吸引虚线默认开启：新域名（如 Tailscale）首次打开即与已有域名一致，
+	// 不依赖按域名隔离的 localStorage 才能看到橙色 SHP 目标点与虚线吸引关系。
+	var showShpLayer = true;
+	var showAttractLayer = true;
 	/** @type {Set<string>} */
 	var forceKinds = new Set(FORCE_KINDS);
 	var overlay = null;
@@ -65,9 +67,9 @@
 	var dragCenter = null;
 
 	try {
-		showScaleCenter = localStorage.getItem(SHOW_CENTER_KEY) === '1';
-		showShpLayer = localStorage.getItem(SHOW_SHP_KEY) === '1';
-		showAttractLayer = localStorage.getItem(SHOW_ATTRACT_KEY) === '1';
+		if (localStorage.getItem(SHOW_CENTER_KEY) === '1') showScaleCenter = true;
+		if (localStorage.getItem(SHOW_SHP_KEY) === '0') showShpLayer = false;
+		if (localStorage.getItem(SHOW_ATTRACT_KEY) === '0') showAttractLayer = false;
 	} catch (e0) { /* ignore */ }
 
 	function caseName() {
