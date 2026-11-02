@@ -245,9 +245,15 @@
 			'<button type="button" class="ocis-opt-x" id="ocisOptPreviewClose" aria-label="关闭">✕</button>' +
 			'</div>' +
 			'<div class="ocis-opt-body is-preview">' +
-			'<div class="ocis-opt-heat-wrap" id="ocisOptHeatWrap"><canvas id="ocisOptHeat"></canvas></div>' +
-			'<div class="ocis-opt-legend"><span>低</span><i class="ocis-opt-ramp"></i><span>高</span>' +
-			'<em id="ocisOptLegendNote"></em></div>' +
+			'<div class="schedule-heatmap ocis-opt-heat-wrap" id="ocisOptHeatWrap">' +
+			'<div class="schedule-heatmap-meta" id="ocisOptHeatMeta">选择需求/结果文件后点「预览」。</div>' +
+			'<div class="schedule-heatmap-selection" id="ocisOptHeatSel">色值按每个对象自身峰值归一化；悬停或点击单元格查看实际数值。</div>' +
+			'<div class="schedule-heatmap-chart" id="ocisOptHeatChart"></div>' +
+			'<div class="schedule-heatmap-legend"><span>0</span>' +
+			'<span class="schedule-heatmap-gradient"></span><span>对象峰值 100%</span></div>' +
+			'<div class="schedule-heatmap-tip" id="ocisOptHeatTip" role="tooltip"></div>' +
+			'</div>' +
+			'<div class="ocis-opt-info-wrap" id="ocisOptInfoWrap" hidden></div>' +
 			'</div>' +
 			'</div>';
 
@@ -286,8 +292,11 @@
 		r.previewTitle = $('ocisOptPreviewTitle');
 		r.previewMeta = $('ocisOptPreviewMeta');
 		r.heatWrap = $('ocisOptHeatWrap');
-		r.heat = $('ocisOptHeat');
-		r.legendNote = $('ocisOptLegendNote');
+		r.heatMeta = $('ocisOptHeatMeta');
+		r.heatSel = $('ocisOptHeatSel');
+		r.heatChart = $('ocisOptHeatChart');
+		r.heatTip = $('ocisOptHeatTip');
+		r.infoWrap = $('ocisOptInfoWrap');
 
 		wire();
 		st.built = true;
@@ -870,7 +879,9 @@
 		var mask = st.refs.previewMask;
 		st.refs.previewTitle.textContent = title;
 		st.refs.previewMeta.textContent = '';
-		st.refs.heatWrap.innerHTML = html;
+		st.refs.heatWrap.hidden = true;
+		st.refs.infoWrap.hidden = false;
+		st.refs.infoWrap.innerHTML = html;
 		mask.classList.add('is-open', 'is-info');
 	}
 
@@ -888,7 +899,10 @@
 			setStatus('该文件不是调度热图（' + rel + '），请改选 action_td / Q_td 等 CSV', 'error');
 			return;
 		}
-		previewPlan(name, rel, '调度结果 · ' + rel);
+		previewPlan(name, rel, '调度结果 · ' + rel, {
+			unit: 'm³/s',
+			hint: '色值按每个对象自身流量峰值归一化；悬停或点击单元格查看实际流量。'
+		});
 	}
 
 	function previewDemand() {
@@ -898,14 +912,17 @@
 			setStatus('没有可预览的需求文件', 'error');
 			return;
 		}
-		previewPlan(name, rel, '需求预览 · data/' + name + ' / ' + rel);
+		previewPlan(name, rel, '需求预览 · data/' + name + ' / ' + rel, {
+			unit: 'm³',
+			hint: '色值按每个对象自身需水峰值归一化；悬停或点击单元格查看实际水量。'
+		});
 	}
 
 	/**
 	 * Ask the server for the heatmap plan. Embedded inside the 3D page? hand the
 	 * plan to the parent so its existing 调度热图对话框 opens instead.
 	 */
-	function previewPlan(name, rel, title) {
+	function previewPlan(name, rel, title, opts) {
 		if (!name || !rel) {
 			setStatus('没有可预览的文件', 'error');
 			return;
@@ -916,251 +933,71 @@
 				if (!pack.res.ok || plan.error) throw new Error(plan.error || ('HTTP ' + pack.res.status));
 				if (window.parent && window.parent !== window) {
 					try {
-						window.parent.postMessage({ type: 'optSchedule', action: 'preview', plan: plan, title: title }, '*');
+						window.parent.postMessage({
+							type: 'optSchedule',
+							action: 'preview',
+							plan: plan,
+							title: title,
+							unit: (opts && opts.unit) || '',
+							hint: (opts && opts.hint) || ''
+						}, '*');
 						return;
 					} catch (e) { /* fall through to the built-in viewer */ }
 				}
-				openPreview(plan, title);
+				openPreview(plan, title, opts);
 			})
 			.catch(function (err) {
 				setStatus('预览失败：' + (err && err.message ? err.message : err), 'error');
 			});
 	}
 
-	/** 每屏最多画多少列：超出的时间点按桶聚合，避免 1.4 万列的巨型 canvas 直接画空。 */
-	var MAX_COLS = 288;
-	var MAX_ROWS = 320;
-
-	function planMatrix(plan) {
-		var names = (plan && plan.columns) ? plan.columns.slice() : Object.keys((plan && plan.series) || {});
-		var labels = (plan && plan.timeLabels) || [];
-		var n = labels.length || ((plan && plan.times) ? plan.times.length : 0);
-		var series = (plan && plan.series) || {};
-
-		// 只保留真的有数值的对象，全空的行画出来只是灰色噪音
-		var rows = [];
-		names.forEach(function (name) {
-			var vals = series[name];
-			if (!vals) return;
-			var has = false;
-			for (var i = 0; i < vals.length; ++i) {
-				var v = Number(vals[i]);
-				if (isFinite(v)) {
-					has = true;
-					break;
-				}
-			}
-			if (has) rows.push({ name: name, values: vals });
-		});
-
-		if (!n || !rows.length) return { rows: [], labels: [], n: 0, bucket: 1, dropped: 0 };
-
-		var cols = Math.min(n, MAX_COLS);
-		var bucket = n > MAX_COLS ? n / MAX_COLS : 1;
-		var outLabels = [];
-		for (var c = 0; c < cols; ++c) {
-			var idx = Math.min(n - 1, Math.floor(c * bucket));
-			outLabels.push(labels[idx] || ('t' + idx));
-		}
-
-		var dropped = Math.max(0, rows.length - MAX_ROWS);
-		var slice = dropped ? rows.slice(0, MAX_ROWS) : rows;
-
-		// 稀疏观测文件（如 waterdemand_td_obs.csv）每个对象只有少量时刻，
-		// 直接抽样会几乎全空；按桶取非空均值，桶里完全没有值就留空。
-		var matrix = slice.map(function (row) {
-			var vals = row.values;
-			var sum = new Float64Array(cols);
-			var cnt = new Int32Array(cols);
-			for (var i = 0; i < vals.length; ++i) {
-				var v = Number(vals[i]);
-				if (!isFinite(v)) continue;
-				var b = Math.min(cols - 1, Math.floor(i / bucket));
-				sum[b] += v;
-				cnt[b] += 1;
-			}
-			var out = new Array(cols);
-			var min = Infinity;
-			var max = -Infinity;
-			for (var j = 0; j < cols; ++j) {
-				if (!cnt[j]) {
-					out[j] = null;
-					continue;
-				}
-				var avg = sum[j] / cnt[j];
-				out[j] = avg;
-				if (avg < min) min = avg;
-				if (avg > max) max = avg;
-			}
-			return { name: row.name, values: out, min: min, max: max };
-		});
-
-		return {
-			rows: matrix,
-			labels: outLabels,
-			n: cols,
-			bucket: bucket,
-			dropped: dropped,
-			sourceTimes: n,
-			sourceRows: rows.length
-		};
-	}
-
-	function openPreview(plan, title) {
-		st.preview = plan;
-		var mask = st.refs.previewMask;
-		st.refs.heatWrap.innerHTML = '<canvas id="ocisOptHeat"></canvas>';
-		st.refs.heat = $('ocisOptHeat');
-		st.refs.previewTitle.textContent = title || ('预览 · ' + (plan.rel || plan.file || ''));
-
-		var m = planMatrix(plan);
-		var bits = [];
-		if (m.n) {
-			bits.push(m.rows.length + ' 个对象 × ' + m.n + ' 个时段');
-			if (m.bucket > 1) bits.push('原 ' + m.sourceTimes + ' 个时间点已分箱');
-			if (m.dropped) bits.push('只画前 ' + m.rows.length + ' 个对象');
-			if (m.labels.length) bits.push(m.labels[0] + ' → ' + m.labels[m.labels.length - 1]);
-		}
-		st.refs.previewMeta.textContent = bits.join(' · ');
-		mask.classList.add('is-open');
-		mask.classList.remove('is-info');
-		st.refs.legendNote.textContent = m.rows.length
-			? '色值按每个对象自身的最小/最大值归一化 · 空格表示该时段没有记录'
-			: '该文件没有可绘制的数值';
+	/**
+	 * 预览热图直接复用 3D「调度方案预览」的同一套组件（js/nvScheduleHeatmap.js）：
+	 * 单色 bg→series 由每个对象自身峰值归一化，SVG 绘制，颜色/分栏/提示完全一致。
+	 */
+	function openPreview(plan, title, opts) {
+		st.preview = plan || null;
+		st.previewOpts = opts || {};
+		st.refs.previewTitle.textContent = title || ('预览 · ' + ((plan && (plan.rel || plan.file)) || ''));
+		st.refs.previewMeta.textContent = '';
+		st.refs.heatSel.textContent = st.previewOpts.hint ||
+			'色值按每个对象自身峰值归一化；悬停或点击单元格查看实际数值。';
+		st.refs.heatSel.removeAttribute('data-pinned');
+		st.refs.previewMask.classList.remove('is-info');
+		st.refs.heatWrap.hidden = false;
+		st.refs.infoWrap.hidden = true;
+		st.refs.infoWrap.innerHTML = '';
+		st.refs.previewMask.classList.add('is-open');
 		drawHeatmap();
 	}
 
 	function closePreview() {
 		if (!st.built) return;
 		st.refs.previewMask.classList.remove('is-open', 'is-info');
-	}
-
-	function ramp(t) {
-		// blue → cyan → green → amber → red（低位提亮，避免大面积深蓝看不出差别）
-		var stops = [
-			[59, 130, 246],
-			[34, 211, 238],
-			[34, 197, 94],
-			[250, 204, 21],
-			[239, 68, 68]
-		];
-		var x = clamp(Math.pow(clamp(t, 0, 1), 0.75), 0, 0.9999) * (stops.length - 1);
-		var i = Math.floor(x);
-		var f = x - i;
-		var a = stops[i];
-		var b = stops[i + 1] || stops[i];
-		return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * f) + ',' +
-			Math.round(a[1] + (b[1] - a[1]) * f) + ',' +
-			Math.round(a[2] + (b[2] - a[2]) * f) + ')';
+		if (st.refs.heatTip) st.refs.heatTip.style.display = 'none';
 	}
 
 	function drawHeatmap() {
 		var plan = st.preview;
-		var cv = $('ocisOptHeat');
-		if (!plan || !cv) return;
-		var wrap = st.refs.heatWrap;
-		var m = planMatrix(plan);
-		var rows = m.rows;
-		var nT = m.n;
-		var labels = m.labels;
-
-		if (!rows.length || !nT) {
-			cv.width = 1;
-			cv.height = 1;
-			cv.style.width = '0px';
-			cv.style.height = '0px';
+		var chart = st.refs.heatChart;
+		if (!plan || !chart || !st.built) return;
+		if (st.refs.previewMask.classList.contains('is-info')) return;
+		if (typeof NVScheduleHeatmap === 'undefined') {
+			chart.textContent = '热图模块未加载 (js/nvScheduleHeatmap.js)';
 			return;
 		}
-
-		var gutter = 132;
-		var avail = Math.max(240, (wrap.clientWidth || 620) - 40 - gutter);
-		var cellW = clamp(Math.floor(avail / nT), 4, 40);
-		var cellH = rows.length > 160 ? 10 : (rows.length <= 48 ? 16 : 14);
-		var headH = 18;
-		var cssW = gutter + nT * cellW;
-		var cssH = headH + rows.length * cellH;
-		var dpr = Math.min(2, window.devicePixelRatio || 1);
-
-		cv.width = Math.floor(cssW * dpr);
-		cv.height = Math.floor(cssH * dpr);
-		cv.style.width = cssW + 'px';
-		cv.style.height = cssH + 'px';
-
-		var ctx = cv.getContext('2d');
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		ctx.clearRect(0, 0, cssW, cssH);
-
-		var dark = document.body.classList.contains('dark');
-		var labelColor = dark ? 'rgba(226,224,236,.82)' : 'rgba(40,40,52,.82)';
-		var muteColor = dark ? 'rgba(180,178,196,.55)' : 'rgba(90,90,110,.6)';
-		var gridColor = dark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.045)';
-		var emptyColor = dark ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.028)';
-
-		ctx.font = '10px "Source Sans 3","Microsoft YaHei",sans-serif';
-		ctx.textBaseline = 'middle';
-
-		// column tick labels (时间)
-		var labelEvery = Math.max(1, Math.ceil(nT / Math.max(4, Math.floor(avail / 78))));
-		ctx.fillStyle = muteColor;
-		ctx.textAlign = 'left';
-		for (var c = 0; c < nT; c += labelEvery) {
-			var lbl = labels[c] ? String(labels[c]) : '';
-			if (!lbl) continue;
-			var short = lbl.length > 16 ? lbl.slice(5, 16) : lbl;
-			ctx.fillText(short, gutter + c * cellW, headH / 2 + 1);
+		var data = NVScheduleHeatmap.fromPlan(plan);
+		if (!data.timestamps.length || !data.rows.length) {
+			chart.textContent = '该文件没有可绘制的数值';
+			st.refs.heatMeta.textContent = plan.file || plan.rel || '';
+			return;
 		}
-
-		// cells
-		for (var r = 0; r < rows.length; ++r) {
-			var row = rows[r];
-			var vals = row.values;
-			var flat = !isFinite(row.min) || row.max - row.min < 1e-9;
-			var y = headH + r * cellH;
-			for (var cc = 0; cc < nT; ++cc) {
-				var x = gutter + cc * cellW;
-				var val = vals[cc];
-				if (val === null || !isFinite(val)) {
-					ctx.fillStyle = emptyColor;
-				} else if (flat) {
-					ctx.fillStyle = dark ? 'rgba(255,255,255,.20)' : 'rgba(60,60,80,.18)';
-				} else {
-					ctx.fillStyle = ramp((val - row.min) / (row.max - row.min));
-				}
-				ctx.fillRect(x, y, cellW - 1, cellH - 1);
-			}
-			ctx.fillStyle = labelColor;
-			ctx.textAlign = 'right';
-			ctx.fillText(fitText(ctx, row.name, gutter - 10), gutter - 10, y + cellH / 2);
-			ctx.fillStyle = gridColor;
-			ctx.fillRect(gutter - 6, y + cellH - 1, cssW - gutter + 6, 1);
-		}
-
-		cv.onmousemove = function (ev) {
-			var box = cv.getBoundingClientRect();
-			var col = Math.floor((ev.clientX - box.left - gutter) / cellW);
-			var rw = Math.floor((ev.clientY - box.top - headH) / cellH);
-			if (col < 0 || rw < 0 || col >= nT || rw >= rows.length) {
-				st.refs.legendNote.textContent = '色值按每个对象自身的最小/最大值归一化 · 空格表示该时段没有记录';
-				return;
-			}
-			var item = rows[rw];
-			var vv = item.values[col];
-			st.refs.legendNote.textContent = item.name + ' · ' + (labels[col] || ('t=' + col)) + ' · ' +
-				(vv === null || !isFinite(vv) ? '无记录' : vv.toFixed(3));
-		};
-	}
-
-	function fitText(ctx, text, maxW) {
-		var s = String(text || '');
-		if (ctx.measureText(s).width <= maxW) return s;
-		var lo = 0;
-		var hi = s.length;
-		while (lo < hi) {
-			var mid = Math.ceil((lo + hi) / 2);
-			if (ctx.measureText(s.slice(0, mid) + '…').width <= maxW) lo = mid;
-			else hi = mid - 1;
-		}
-		return s.slice(0, Math.max(1, lo)) + '…';
+		NVScheduleHeatmap.draw(chart, data, {
+			meta: st.refs.heatMeta,
+			selection: st.refs.heatSel,
+			tooltip: st.refs.heatTip,
+			unit: (st.previewOpts && st.previewOpts.unit) || 'm³/s'
+		});
 	}
 
 	/* ----------------------------------------------------------------- params */

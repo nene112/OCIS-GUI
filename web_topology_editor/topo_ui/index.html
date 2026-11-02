@@ -518,17 +518,46 @@
   }
   .ocis-opt-table input,.ocis-opt-table select{height:24px;width:100%;min-width:56px;font-size:11px}
   .ocis-opt-relax{padding-bottom:6px}
-  /* preview */
-  .ocis-opt-heat-wrap{overflow:auto;border-radius:10px;padding:0 0 4px;max-height:calc(100vh - 250px)}
-  .ocis-opt-heat-wrap canvas{display:block;border-radius:6px}
-  .ocis-opt-legend{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:9.5px;color:var(--text-muted)}
-  .ocis-opt-mask.is-info .ocis-opt-legend{display:none}
-  .ocis-opt-mask.is-info .ocis-opt-heat-wrap{padding-bottom:0}
-  .ocis-opt-legend em{font-style:normal;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ocis-opt-ramp{
-    width:120px;height:7px;border-radius:99px;
-    background:linear-gradient(90deg,#3b82f6,#22d3ee,#22c55e,#facc15,#ef4444);
+  /* preview —— 与 3D「调度方案预览」共用 nvScheduleHeatmap.js + .schedule-heatmap 主题 */
+  .ocis-opt-heat-wrap{
+    --hm-bg:#1e1e1e;--hm-fg:#edf1f7;--hm-muted:#aab4c4;--hm-border:#3c3c3c;--hm-series:#3d8bfd;
+    max-height:calc(100vh - 250px);overflow:auto;
+    padding:10px 13px 8px;border-radius:12px;
+    background:#252526;border:1px solid rgba(255,255,255,.08);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+    color:var(--hm-fg);font-size:13px;
   }
+  .ocis-opt-heat-wrap .schedule-heatmap-meta{
+    color:var(--hm-muted);display:flex;gap:12px;flex-wrap:wrap;
+    margin-bottom:6px;font-size:12px;
+  }
+  .ocis-opt-heat-wrap .schedule-heatmap-selection{
+    min-height:22px;margin:4px 0 8px;color:var(--hm-fg);font-size:12px;
+  }
+  .ocis-opt-heat-wrap .schedule-heatmap-chart{width:100%;max-height:min(68vh,640px);overflow:auto}
+  .ocis-opt-heat-wrap .schedule-heatmap-chart svg{display:block;width:100%;height:auto}
+  .ocis-opt-heat-wrap .schedule-heatmap-chart svg text{fill:var(--hm-fg);font-size:11px}
+  .ocis-opt-heat-wrap .schedule-heatmap-chart svg .muted{fill:var(--hm-muted)}
+  .ocis-opt-heat-wrap .schedule-heatmap-chart .frame,
+  .ocis-opt-heat-wrap .schedule-heatmap-chart .divider{
+    stroke:var(--hm-border);fill:none;shape-rendering:crispEdges;
+  }
+  .ocis-opt-heat-wrap .schedule-heatmap-chart .divider{stroke-width:1.5}
+  .ocis-opt-heat-wrap .schedule-heatmap-chart .cell{cursor:crosshair}
+  .ocis-opt-heat-wrap .schedule-heatmap-legend{
+    display:flex;align-items:center;justify-content:flex-end;gap:7px;
+    color:var(--hm-muted);font-size:12px;margin-top:6px;
+  }
+  .ocis-opt-heat-wrap .schedule-heatmap-gradient{
+    width:120px;height:10px;border-radius:4px;border:1px solid var(--hm-border);
+    background:linear-gradient(90deg,var(--hm-bg),var(--hm-series));
+  }
+  .ocis-opt-heat-wrap .schedule-heatmap-tip{
+    position:fixed;display:none;pointer-events:none;z-index:2000;white-space:nowrap;
+    background:#f2f4f7;color:#111827;padding:6px 8px;border-radius:5px;font-size:12px;
+    box-shadow:0 6px 18px rgba(0,0,0,.35);
+  }
+  .ocis-opt-info-wrap{max-height:calc(100vh - 250px);overflow:auto}
   </style>
 </head>
 <body>
@@ -2376,7 +2405,8 @@
   <script src="/topo_ui/graph-spatial-layer.js"></script>
   <script src="/topo_ui/graph-node-size.js"></script>
   <script src="/topo_ui/graph-node-hovercard.js?v=3"></script>
-  <script src="/topo_ui/graph-opt-schedule.js?v=8"></script>
+  <script src="/js/nvScheduleHeatmap.js?v=4"></script>
+  <script src="/topo_ui/graph-opt-schedule.js?v=11"></script>
 
 </body>
 </html>
