@@ -197,11 +197,12 @@
 			'<button type="button" class="ocis-opt-btn" id="ocisOptPreviewDemand">预览需求</button>' +
 			'<span class="ocis-opt-hint" id="ocisOptHint">未修改时段/需求时按案例文件计算，与本地 SLN 一致</span>' +
 			'</div>' +
-			'<div class="ocis-opt-result" id="ocisOptResultBox" hidden>' +
 			'<div class="ocis-opt-result-head">' +
-			'<span class="ocis-opt-optimal" id="ocisOptOptimal"></span>' +
-			'<button type="button" class="ocis-opt-btn is-mini" id="ocisOptRelaxBtn">放松约束</button>' +
+			'<span class="ocis-opt-optimal" id="ocisOptOptimal" hidden></span>' +
+			'<button type="button" class="ocis-opt-btn is-mini" id="ocisOptRelaxBtn" disabled>放松约束</button>' +
+			'<button type="button" class="ocis-opt-btn is-mini" id="ocisOptMinSupply" aria-pressed="false" title="点亮后，调度计算只用最小供水网络；再点一次恢复案例原始拓扑">最小供水网络</button>' +
 			'</div>' +
+			'<div class="ocis-opt-result" id="ocisOptResultBox" hidden>' +
 			'<div class="ocis-opt-result-row">' +
 			'<select id="ocisOptResultFile"></select>' +
 			'<button type="button" class="ocis-opt-btn" id="ocisOptPreview">预览结果</button>' +
@@ -279,6 +280,7 @@
 		r.resultFile = $('ocisOptResultFile');
 		r.previewBtn = $('ocisOptPreview');
 		r.demandPreviewBtn = $('ocisOptPreviewDemand');
+		r.minSupplyBtn = $('ocisOptMinSupply');
 		r.paramsCalc = $('ocisOptParamsCalc');
 		r.paramsGates = $('ocisOptParamsGates');
 		r.gateWrap = $('ocisOptGateWrap');
@@ -308,6 +310,7 @@
 		r.run.addEventListener('click', runSolve);
 		r.previewBtn.addEventListener('click', previewResult);
 		r.demandPreviewBtn.addEventListener('click', previewDemand);
+		if (r.minSupplyBtn) r.minSupplyBtn.addEventListener('click', showMinSupply);
 		r.relaxBtn.addEventListener('click', showRelaxations);
 		r.paramsReload.addEventListener('click', loadParams);
 		r.paramsSave.addEventListener('click', saveParams);
@@ -334,6 +337,9 @@
 
 		r.case.addEventListener('change', function () {
 			if (st.loadingMeta) return;
+			var api = window.OcisMinSupply;
+			var saved = api && typeof api.selection === 'function' ? api.selection() : null;
+			if (saved && saved.caseName !== selectedCase() && typeof api.clear === 'function') api.clear();
 			loadMeta({ keepCase: true });
 		});
 		r.algo.addEventListener('change', function () {
@@ -725,11 +731,18 @@
 			payload.step_dt = Math.round(time.step_dt);
 		}
 		if (!demandMatchesCase()) payload.demandFile = selectedDemand();
+		var supply = window.OcisMinSupply && typeof OcisMinSupply.selection === 'function'
+			? OcisMinSupply.selection() : null;
+		if (supply && supply.caseName === name) {
+			payload.minSupply = { poolSources: supply.poolSources, nodes: supply.nodes };
+		}
 
 		setBusy(true);
-		setStatus(payload.applyTimeOverride || payload.demandFile
-			? '提交计算（已覆盖案例时段/需求）…'
-			: '提交计算（按案例文件，与本地 SLN 相同）…', 'live');
+		setStatus(payload.minSupply
+			? '提交计算（最小供水网络）…'
+			: (payload.applyTimeOverride || payload.demandFile
+				? '提交计算（已覆盖案例时段/需求）…'
+				: '提交计算（按案例文件，与本地 SLN 相同）…'), 'live');
 
 		jsonFetch('/api/opt-milp/run', {
 			method: 'POST',
@@ -833,6 +846,7 @@
 		st.lastFile = job.file || st.lastFile;
 		fillResultFiles(job.outputs || [], job.file);
 		st.refs.resultBox.hidden = !st.lastResult;
+		st.refs.optimal.hidden = !st.lastResult;
 		if (st.lastResult) {
 			st.refs.optimal.textContent = st.lastResult.optimal ? '最优解' : '非最优解';
 			st.refs.optimal.className = 'ocis-opt-optimal' +
@@ -1162,6 +1176,23 @@
 			.catch(function (err) {
 				setParamsStatus('保存失败：' + (err && err.message ? err.message : err));
 			});
+	}
+
+	function showMinSupply() {
+		var api = window.OcisMinSupply;
+		if (!api || typeof api.toggle !== 'function') {
+			setStatus('最小供水网络模块还没加载', 'err');
+			return;
+		}
+		var btn = st.refs.minSupplyBtn;
+		if (btn) btn.disabled = true;
+		api.toggle({ caseName: selectedCase(), file: selectedDemand() }).then(function (shown) {
+			if (btn) btn.disabled = false;
+			setStatus(shown ? '已点亮最小供水网络，开始计算将只用这张网络' : '调度计算使用案例原始拓扑', shown ? 'live' : '');
+		}).catch(function (err) {
+			if (btn) btn.disabled = false;
+			setStatus(err && err.message ? err.message : String(err), 'err');
+		});
 	}
 
 	/* ------------------------------------------------------------------- boot */
