@@ -136,9 +136,14 @@
 		var g = gObj();
 		if (!g || !g.layout || !g.layout.config) return;
 		var c = g.layout.config;
+		// 自由力导走 GraphGPU 原力导：弹簧必须留着，否则只有斥力，节点会一直外扩。
+		if (freeForceTypes && freeForceTypes.size > 0) {
+			applyGraphForce();
+			return;
+		}
 		c.springConstant = 0;
 		// N-body repulsion is what turns direct laterals into a starburst.
-		if (spatialActive && !(freeForceTypes && freeForceTypes.size > 0)) {
+		if (spatialActive) {
 			c.gravitationalConstant = 0;
 			c.centralGravity = 0;
 		}
@@ -906,6 +911,41 @@
 	var frozenPos = Object.create(null);
 	/** @type {Set<string>} */
 	var freeForceTypes = new Set();
+	/** Rest length frozen when free-force turns on. Chasing the live spacing removes the spring pull. */
+	var freeSpringLength = 0;
+	/** Original GraphGPU stops at 1000 steps. The keep-alive otherwise ticks forever. */
+	var freeForceSteps = 0;
+	var FREE_FORCE_MAX_STEPS = 1000;
+	/** vis.js / GraphGPU defaults (CPU Sr and GPU compute shader share these). */
+	var GRAPH_FORCE = {
+		gravitationalConstant: -0.25,
+		springConstant: 0.06,
+		centralGravity: 0.012,
+		damping: 0.18,
+		timestep: 0.35,
+		maxVelocity: 0.06
+	};
+
+	function applyGraphForce() {
+		var g = gObj();
+		if (!g || !g.layout || !g.layout.config) return;
+		var c = g.layout.config;
+		c.gravitationalConstant = GRAPH_FORCE.gravitationalConstant;
+		c.springConstant = GRAPH_FORCE.springConstant;
+		c.centralGravity = GRAPH_FORCE.centralGravity;
+		c.damping = GRAPH_FORCE.damping;
+		c.timestep = GRAPH_FORCE.timestep;
+		c.maxVelocity = GRAPH_FORCE.maxVelocity;
+		c.centralGravity = GRAPH_FORCE.centralGravity;
+		// 原默认 0.2 是单位坐标。这张图边长大约是它的几十倍，直接用 0.2 会把节点叠在一起。
+		// 打开时按当前边长固定一次，之后不再跟着变长。
+		if (!(freeSpringLength > 0)) {
+			var L0 = springLengthFromPositions();
+			freeSpringLength = L0 > 1 ? L0 : 8;
+		}
+		c.springLength = freeSpringLength;
+		c.maxIterations = 1000;
+	}
 
 	function loadFreeForceTypes() {
 		freeForceTypes = new Set();
@@ -1089,16 +1129,9 @@
 		var posL = springLengthFromPositions();
 		var freeOn = freeForceTypes && freeForceTypes.size > 0;
 		if (freeOn) {
-			// Free-force needs real springs/repulsion; ultra-soft profile makes “自由力导” look dead.
-			var rep = Math.max(readSpatialRepulse(), 0.025);
-			c.gravitationalConstant = -rep * sizeF;
-			c.springLength = posL > 0 ? posL : Math.max(12, stubR * 3 + 8) * sizeF;
-			c.springConstant = 0;
-			c.centralGravity = 0.004;
-			c.damping = 0.72;
-			c.maxVelocity = 22;
-			c.timestep = 0.4;
+			applyGraphForce();
 		} else {
+			freeSpringLength = 0;
 			c.gravitationalConstant = 0;
 			c.springLength = posL > 0 ? posL : Math.max(1, stubR * 1.02 + 0.5) * sizeF;
 			c.springConstant = 0;
@@ -1513,6 +1546,8 @@
 			var mag = stretch * k;
 			var sNode = graph.getNode(e.source);
 			var tNode = graph.getNode(e.target);
+			// 自由力导的边只交给 GraphGPU 原弹簧，静止长度不跟着两端距离变长。
+			if (allowFreeForce(nodeTypeKey(sNode)) || allowFreeForce(nodeTypeKey(tNode))) return;
 			var srcShp = spatialActive && isShpAnchorNode(sNode);
 			var tgtShp = spatialActive && isShpAnchorNode(tNode);
 			if (srcShp && tgtShp) return;
@@ -1763,10 +1798,28 @@
 		if (!layout.__ocisAttractorWrapped) {
 			var origTick = layout.tick.bind(layout);
 			layout.tick = function () {
+				var freeOn = freeForceTypes && freeForceTypes.size > 0;
+				if (freeOn && freeForceSteps >= FREE_FORCE_MAX_STEPS) {
+					if (spatialActive) {
+						placeShpAnchors();
+						applyHierarchicalAttractors();
+					}
+					return 0;
+				}
 				disableGlobalSprings();
-				syncGpuSpringFromPositions();
+				if (!freeOn) syncGpuSpringFromPositions();
 				if (spatialActive) placeShpAnchors();
-				var ret = origTick();
+				var ret = 0;
+				try {
+					ret = origTick();
+				} catch (err) {
+					freeForceSteps = FREE_FORCE_MAX_STEPS;
+					return 0;
+				}
+				if (freeOn) {
+					freeForceSteps += 1;
+					if (!(ret > 0.0005)) freeForceSteps = FREE_FORCE_MAX_STEPS;
+				}
 				disableGlobalSprings();
 				if (spatialActive) applyHierarchicalAttractors();
 				else {
@@ -1786,7 +1839,7 @@
 					hookAttractorTick();
 				}
 				disableGlobalSprings();
-				syncGpuSpringFromPositions();
+				if (!(freeForceTypes && freeForceTypes.size > 0)) syncGpuSpringFromPositions();
 				if (spatialActive) applyHierarchicalAttractors();
 				else {
 					applyPerEdgeSprings();
@@ -2354,6 +2407,8 @@
 			if (inp.checked) freeForceTypes.add(key);
 			else freeForceTypes.delete(key);
 			persistFreeForceTypes();
+			freeForceSteps = 0;
+			if (!freeForceTypes.size) freeSpringLength = 0;
 			if (spatialActive) {
 				unpinAllNodes();
 				softenPhysicsForSpatial();

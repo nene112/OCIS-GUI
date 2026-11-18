@@ -41,6 +41,8 @@
 		busy: false,
 		loadingMeta: false,
 		userPickedAlgo: false,
+		tagTouched: false,
+		sizeTimer: 0,
 		defaults: { start_time: '', T: '', step_dt: '', demandFile: '' },
 		lastFile: '',
 		lastCase: '',
@@ -185,29 +187,41 @@
 			'<div class="ocis-opt-body">' +
 			'<div class="ocis-opt-pane" data-pane="calc">' +
 			'<div class="ocis-opt-grid">' +
-			'<label class="ocis-opt-field is-wide"><span>案例</span><select id="ocisOptCase"></select></label>' +
+			'<label class="ocis-opt-field"><span>案例</span><select id="ocisOptCase"></select></label>' +
+			'<label class="ocis-opt-field"><span>方案标记</span>' +
+			'<input id="ocisOptTag" type="text" autocomplete="off" spellcheck="false" title="随 action_td.csv 保存到案例 result_opt。默认是打开时的时间加当前求解器。"></label>' +
+			'</div>' +
+			'<div class="ocis-opt-grid is-3">' +
 			'<label class="ocis-opt-field"><span>开始时间</span>' +
 			'<input id="ocisOptStart" type="text" placeholder="YYYY-MM-DD HH:mm" autocomplete="off" spellcheck="false"></label>' +
 			'<label class="ocis-opt-field"><span>时长 T（小时）</span><input id="ocisOptDuration" type="number" min="1" step="1"></label>' +
 			'<label class="ocis-opt-field"><span>步长 step_dt（秒）</span><input id="ocisOptStepDt" type="number" min="1" step="1"></label>' +
-			'<label class="ocis-opt-field is-wide"><span>需求文件</span><select id="ocisOptDemand"></select></label>' +
-			'<label class="ocis-opt-field is-wide"><span>算法</span><select id="ocisOptAlgo"></select></label>' +
 			'</div>' +
 			'<div class="ocis-opt-actions">' +
-			'<button type="button" class="ocis-opt-btn" id="ocisOptPreviewDemand">预览需求</button>' +
-			'<span class="ocis-opt-hint" id="ocisOptHint">未修改时段/需求时按案例文件计算，与本地 SLN 一致</span>' +
+			'<label class="ocis-opt-field"><span>实测数据时段（小时）</span>' +
+			'<input id="ocisOptObsHours" type="number" min="1" max="24000" step="1" value="24" title="自开始时间往前取实测数据（小时）。超过 168 小时按日平均"></label>' +
+			'<button type="button" class="ocis-opt-btn" id="ocisOptPreviewObs">预览实测数据</button>' +
 			'</div>' +
+			'<div class="ocis-opt-water">' +
+			'<span>用水计划</span>' +
+			'<div class="ocis-opt-hint" id="ocisOptWaterMeta">自开始时间起取时长 T 的观测库实测流量</div>' +
+			'<button type="button" class="ocis-opt-btn" id="ocisOptPreviewDemand">预览用水计划</button>' +
+			'</div>' +
+			'<select id="ocisOptDemand" hidden aria-hidden="true"></select>' +
+			'<label class="ocis-opt-field is-wide"><span>算法</span><select id="ocisOptAlgo"></select></label>' +
+			'<span class="ocis-opt-hint" id="ocisOptHint">未修改时段时按案例文件计算，与本地 SLN 一致</span>' +
 			'<div class="ocis-opt-result-head">' +
 			'<span class="ocis-opt-optimal" id="ocisOptOptimal" hidden></span>' +
 			'<button type="button" class="ocis-opt-btn is-mini" id="ocisOptRelaxBtn" disabled>放松约束</button>' +
 			'<button type="button" class="ocis-opt-btn is-mini" id="ocisOptMinSupply" aria-pressed="false" title="点亮后，调度计算只用最小供水网络；再点一次恢复案例原始拓扑">最小供水网络</button>' +
 			'</div>' +
-			'<div class="ocis-opt-result" id="ocisOptResultBox" hidden>' +
+			'<div class="ocis-opt-result" id="ocisOptResultBox">' +
 			'<div class="ocis-opt-result-row">' +
 			'<select id="ocisOptResultFile"></select>' +
 			'<button type="button" class="ocis-opt-btn" id="ocisOptPreview">预览结果</button>' +
 			'</div>' +
 			'</div>' +
+			'<div class="ocis-opt-size" id="ocisOptSize" title="节点是进入求解的闸门，边是渠段。SLP 的整数约束是每个闸门、每个时段一条 0-1 约束。">节点 — · 边 — · 整数约束 —</div>' +
 			'</div>' +
 			'<div class="ocis-opt-pane" data-pane="params" hidden>' +
 			'<div class="ocis-opt-subtabs">' +
@@ -227,6 +241,7 @@
 			'<div class="ocis-opt-foot">' +
 			'<span class="ocis-opt-status" id="ocisOptStatus">未计算</span>' +
 			'<span class="ocis-opt-grow"></span>' +
+			'<button type="button" class="ocis-opt-btn" id="ocisOptCancel" hidden disabled>中断计算</button>' +
 			'<button type="button" class="ocis-opt-btn is-primary" id="ocisOptRun">开始计算</button>' +
 			'</div>' +
 			'</div>';
@@ -266,6 +281,12 @@
 		r.panel = mask.querySelector('.ocis-opt-panel');
 		r.meta = $('ocisOptMeta');
 		r.case = $('ocisOptCase');
+		r.tag = $('ocisOptTag');
+		r.obsHours = $('ocisOptObsHours');
+		r.waterMeta = $('ocisOptWaterMeta');
+		r.obsPreviewBtn = $('ocisOptPreviewObs');
+		r.size = $('ocisOptSize');
+		r.cancel = $('ocisOptCancel');
 		r.start = $('ocisOptStart');
 		r.duration = $('ocisOptDuration');
 		r.stepDt = $('ocisOptStepDt');
@@ -308,8 +329,10 @@
 		var r = st.refs;
 
 		r.run.addEventListener('click', runSolve);
+		if (r.cancel) r.cancel.addEventListener('click', cancelSolve);
 		r.previewBtn.addEventListener('click', previewResult);
-		r.demandPreviewBtn.addEventListener('click', previewDemand);
+		r.demandPreviewBtn.addEventListener('click', previewWaterPlan);
+		if (r.obsPreviewBtn) r.obsPreviewBtn.addEventListener('click', previewObs);
 		if (r.minSupplyBtn) r.minSupplyBtn.addEventListener('click', showMinSupply);
 		r.relaxBtn.addEventListener('click', showRelaxations);
 		r.paramsReload.addEventListener('click', loadParams);
@@ -344,20 +367,25 @@
 		});
 		r.algo.addEventListener('change', function () {
 			st.userPickedAlgo = true;
+			applyAutoTag();
+			scheduleModelSize();
 		});
+		if (r.tag) r.tag.addEventListener('input', function () { st.tagTouched = true; });
 		r.resultFile.addEventListener('change', function () {
 			st.lastFile = trim(r.resultFile.value);
 			r.previewBtn.disabled = !st.lastFile;
-		});
-		r.demand.addEventListener('change', function () {
-			r.demandPreviewBtn.disabled = !trim(r.demand.value);
 		});
 		r.paramsFilter.addEventListener('input', function () {
 			snapshotGateEdits();
 			renderGateTable(st.params.gateSchema, st.params.gates);
 		});
-		[r.start, r.duration, r.stepDt].forEach(function (el) {
-			el.addEventListener('input', refreshHint);
+		[r.start, r.duration, r.stepDt, r.obsHours].forEach(function (el) {
+			if (!el) return;
+			el.addEventListener('input', function () {
+				refreshHint();
+				updateWaterPlanMeta();
+				scheduleModelSize();
+			});
 		});
 
 		window.addEventListener('keydown', function (ev) {
@@ -375,7 +403,10 @@
 	function open() {
 		buildDom();
 		st.open = true;
+		st.tagTouched = false;
+		applyAutoTag();
 		refreshHint();
+		updateWaterPlanMeta();
 		showTab('calc');
 		st.refs.mask.classList.add('is-open');
 		loadMeta({ keepCase: !!currentCase() });
@@ -451,13 +482,11 @@
 		if (!st.refs.hint) return;
 		var t = readTimeFields();
 		var over = !timeMatchesCase();
-		var dOver = !!selectedDemand() && !demandMatchesCase();
 		var bits = [];
 		if (over) bits.push('时段将被覆盖');
-		if (dOver) bits.push('需求将被覆盖');
 		st.refs.hint.textContent = bits.length
 			? ('提交时按面板参数覆盖案例：' + bits.join(' / '))
-			: '未修改时段/需求时按案例文件计算，与本地 SLN 一致';
+			: '未修改时段时按案例文件计算，与本地 SLN 一致';
 		st.refs.hint.className = 'ocis-opt-hint' + (bits.length ? ' is-override' : '');
 		void t;
 	}
@@ -468,9 +497,13 @@
 		if (!r.run) return;
 		r.run.disabled = st.busy;
 		r.run.textContent = st.busy ? '计算中…' : '开始计算';
+		if (r.cancel) {
+			r.cancel.hidden = !st.busy;
+			r.cancel.disabled = !st.busy;
+		}
 		if (r.case) r.case.disabled = st.busy;
 		if (r.previewBtn) r.previewBtn.disabled = st.busy || !trim(r.resultFile.value);
-		if (r.demandPreviewBtn) r.demandPreviewBtn.disabled = st.busy || !selectedDemand();
+		if (r.demandPreviewBtn) r.demandPreviewBtn.disabled = st.busy;
 		if (r.paramsSave) r.paramsSave.disabled = st.busy;
 		r.mask.classList.toggle('is-busy', st.busy);
 	}
@@ -516,8 +549,10 @@
 			sel.appendChild(opt);
 		});
 		if (st.userPickedAlgo && prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+		else if (sel.querySelector('option[value="4"]')) sel.value = '4';
+		else if (sel.querySelector('option[value="3"]')) sel.value = '3';
 		else if (sel.querySelector('option[value="8"]')) sel.value = '8';
-		else if (sel.querySelector('option[value="7"]')) sel.value = '7';
+		applyAutoTag();
 	}
 
 	/**
@@ -559,7 +594,7 @@
 		var rows = inputCsvFiles(files, prev);
 		if (!rows.length) {
 			sel.appendChild(new Option('（案例 input/ 下未找到 csv）', ''));
-			if (st.refs.demandPreviewBtn) st.refs.demandPreviewBtn.disabled = true;
+			if (st.refs.demandPreviewBtn) st.refs.demandPreviewBtn.disabled = false;
 			return;
 		}
 		rows.forEach(function (f) {
@@ -569,7 +604,7 @@
 			sel.appendChild(new Option(label, rel));
 		});
 		if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
-		if (st.refs.demandPreviewBtn) st.refs.demandPreviewBtn.disabled = !sel.value;
+		if (st.refs.demandPreviewBtn) st.refs.demandPreviewBtn.disabled = false;
 	}
 
 	function fillTime(time) {
@@ -636,7 +671,7 @@
 					setStatus('上次结果 · solver_type=' + data.lastResult.solverType +
 						(data.lastResult.result.optimal ? ' · 最优解' : ' · 非最优解'), 'done');
 				} else {
-					fillResultFiles(st.lastOutputs, st.lastFile);
+					refreshResultSchemes(st.lastFile);
 				}
 				st.params.loaded = false;
 			})
@@ -646,21 +681,144 @@
 			})
 			.then(function () {
 				st.loadingMeta = false;
+				updateWaterPlanMeta();
+				scheduleModelSize();
 			});
 	}
 
 	/* ------------------------------------------------------------- run / poll */
 
+	function solverMark() {
+		var sel = st.refs.algo;
+		if (!sel || sel.selectedIndex < 0) return '';
+		return String(sel.options[sel.selectedIndex].textContent || '')
+			.replace(/\s*\(solver_type=\d+\)\s*$/, '').trim();
+	}
+
+	function stampTag() {
+		var d = new Date();
+		function p(n) { return n < 10 ? '0' + n : String(n); }
+		var time = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+			' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+		var mark = solverMark();
+		return mark ? (time + ' ' + mark) : time;
+	}
+
+	function applyAutoTag() {
+		if (st.tagTouched || !st.refs.tag) return;
+		st.refs.tag.value = stampTag();
+	}
+
+	function readResultTag() {
+		var tag = st.refs.tag ? trim(st.refs.tag.value) : '';
+		if (!tag) {
+			tag = stampTag();
+			if (st.refs.tag) st.refs.tag.value = tag;
+		}
+		return tag;
+	}
+
+	function readObsHours() {
+		var n = st.refs.obsHours ? num(st.refs.obsHours.value) : 24;
+		if (!isFinite(n) || n <= 0) n = 24;
+		if (n > 24000) n = 24000;
+		return n;
+	}
+
+	function updateWaterPlanMeta(extra) {
+		var el = st.refs.waterMeta;
+		if (!el) return;
+		var t = readTimeFields();
+		var bits = [];
+		if (t.start_time) bits.push('自 ' + t.start_time);
+		if (isFinite(t.T) && t.T > 0) bits.push('时长 T=' + t.T + ' h');
+		bits.push('观测库实测流量');
+		if (extra) bits.push(extra);
+		el.textContent = bits.join(' · ');
+	}
+
+	function paintModelSize(body) {
+		var el = st.refs.size;
+		if (!el) return;
+		var on = window.OcisMinSupply && OcisMinSupply.active && OcisMinSupply.active();
+		var side = body && (on ? body.minimum : body.full);
+		if (!side) {
+			el.textContent = '节点 — · 边 — · 整数约束 —';
+			return;
+		}
+		if (side.error) {
+			el.textContent = (on ? '最小供水网络 · ' : '') + side.error;
+			return;
+		}
+		el.textContent = (on ? '最小供水网络 · ' : '原始拓扑 · ')
+			+ '节点 ' + side.nodes + ' · 边 ' + side.edges + ' · 整数约束 ' + side.integerConstraints;
+	}
+
+	function refreshModelSize() {
+		var name = selectedCase();
+		if (!st.refs.size) return;
+		if (!name) {
+			st.refs.size.textContent = '节点 — · 边 — · 整数约束 —';
+			return;
+		}
+		var time = readTimeFields();
+		var query = 'case=' + encodeURIComponent(name)
+			+ '&solverType=' + encodeURIComponent(selectedType())
+			+ '&T=' + encodeURIComponent(time.T)
+			+ '&step_dt=' + encodeURIComponent(time.step_dt);
+		jsonFetch('/api/opt-milp/model-size?' + query).then(function (pack) {
+			var body = pack.body || {};
+			if (!pack.res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + pack.res.status));
+			paintModelSize(body);
+		}).catch(function () {
+			if (st.refs.size) st.refs.size.textContent = '规模读取失败';
+		});
+	}
+
+	function scheduleModelSize() {
+		if (st.sizeTimer) clearTimeout(st.sizeTimer);
+		st.sizeTimer = setTimeout(function () {
+			st.sizeTimer = 0;
+			refreshModelSize();
+		}, 250);
+	}
+
+	function formatDuration(ms) {
+		var s = Math.round(Number(ms) / 1000);
+		if (!isFinite(s) || s < 0) return '';
+		if (s < 60) return s + '秒';
+		var m = Math.floor(s / 60);
+		s = s % 60;
+		if (m < 60) return m + '分' + (s ? s + '秒' : '');
+		var h = Math.floor(m / 60);
+		m = m % 60;
+		return h + '小时' + (m ? m + '分' : '');
+	}
+
 	function describeJob(job) {
 		if (!job) return '';
-		if (job.status === 'running') return '计算中… solver_type=' + job.solverType;
+		if (job.status === 'queued') return '已排队，等待上一轮求解器退出…';
+		if (job.status === 'running') {
+			var running = ['计算中…'];
+			var spent = formatDuration(job.elapsedMs);
+			if (spent) running.push('已用 ' + spent);
+			var p = job.progress || {};
+			if (Number(p.outer) > 0 || Number(p.inner) > 0) {
+				running.push('外部迭代 ' + (Number(p.outer) || 0) + ' · 内部迭代 ' + (Number(p.inner) || 0));
+			} else if (job.solverType != null) running.push('solver_type=' + job.solverType);
+			return running.join(' · ');
+		}
+		if (job.status === 'cancelled') return '已中断';
 		if (job.status === 'error') return '失败：' + (job.error || '未知错误');
 		if (job.status === 'done') {
 			var bits = ['完成'];
 			if (job.applyTimeOverride || job.applyDemandOverride) bits.push('已覆盖案例参数');
 			else bits.push('按案例文件');
 			if (job.result) bits.push(job.result.optimal ? '最优解' : '非最优解');
-			if (job.file) bits.push(job.file);
+			if (job.resultOpt && job.resultOpt.rel) bits.push(job.resultOpt.name + (job.resultOpt.tag ? (' · ' + job.resultOpt.tag) : ''));
+			else if (job.file) bits.push(job.file);
+			var took = formatDuration(job.elapsedMs);
+			if (took) bits.push('耗时 ' + took);
 			return bits.join(' · ');
 		}
 		return job.status || '';
@@ -678,10 +836,19 @@
 		st.timer = setInterval(function () {
 			jsonFetch('/api/opt-milp/job?id=' + encodeURIComponent(id))
 				.then(function (pack) {
+					if (pack.res && pack.res.status === 404) {
+						stopPoll();
+						setBusy(false);
+						setStatus('计算已结束或服务已重启，请重新开始', 'error');
+						return;
+					}
 					var job = pack.body && pack.body.job;
 					if (!job) return;
-					setStatus(describeJob(job), 'live');
-					if (job.status === 'done' || job.status === 'error') {
+					setStatus(describeJob(job), job.status === 'error' ? 'error' : 'live');
+					setBusy(job.status === 'running' || job.status === 'queued' ||
+						(job.status === 'cancelled' && job.nativeBusy));
+					if (job.status === 'done' || job.status === 'error' ||
+						(job.status === 'cancelled' && !job.nativeBusy)) {
 						stopPoll();
 						setBusy(false);
 						if (job.status === 'done') {
@@ -718,19 +885,14 @@
 			st.refs.stepDt.focus();
 			return;
 		}
-		if (!selectedDemand()) {
-			setStatus('请选择需求文件', 'error');
-			return;
-		}
 
-		var payload = { case: name, solverType: selectedType() };
+		var payload = { case: name, solverType: selectedType(), resultTag: readResultTag() };
 		if (!timeMatchesCase()) {
 			payload.applyTimeOverride = true;
 			payload.start_time = time.start_time;
 			payload.T = Math.round(time.T);
 			payload.step_dt = Math.round(time.step_dt);
 		}
-		if (!demandMatchesCase()) payload.demandFile = selectedDemand();
 		var supply = window.OcisMinSupply && typeof OcisMinSupply.selection === 'function'
 			? OcisMinSupply.selection() : null;
 		if (supply && supply.caseName === name) {
@@ -740,8 +902,8 @@
 		setBusy(true);
 		setStatus(payload.minSupply
 			? '提交计算（最小供水网络）…'
-			: (payload.applyTimeOverride || payload.demandFile
-				? '提交计算（已覆盖案例时段/需求）…'
+			: (payload.applyTimeOverride
+				? '提交计算（已覆盖案例时段）…'
 				: '提交计算（按案例文件，与本地 SLN 相同）…'), 'live');
 
 		jsonFetch('/api/opt-milp/run', {
@@ -774,47 +936,46 @@
 		return null;
 	}
 
-	function fillResultFiles(outputs, preferred) {
+	function fillResultFiles(files, preferred) {
 		var sel = st.refs.resultFile;
 		if (!sel) return;
-		st.lastOutputs = outputs || [];
+		st.lastOutputs = files || [];
 		var prev = trim(preferred) || trim(sel.value) || st.lastFile;
 		sel.innerHTML = '';
 		if (!st.lastOutputs.length) {
-			sel.appendChild(new Option('（计算完成后列出本次写出的文件）', ''));
+			sel.appendChild(new Option('（result_opt 还没有方案）', ''));
 			st.refs.previewBtn.disabled = true;
 			return;
 		}
-		st.lastOutputs.forEach(function (o) {
-			var rel = trim(o && o.rel);
+		st.lastOutputs.forEach(function (f) {
+			var rel = trim(f && f.rel);
 			if (!rel) return;
-			var label = (o.label ? o.label + ' · ' : '') + rel;
-			if (o.preview === false) label += '（不可热图）';
+			var label = f.name || rel;
+			if (f.tag) label += ' · ' + f.tag;
 			sel.appendChild(new Option(label, rel));
 		});
-		if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
-		else {
-			for (var i = 0; i < st.lastOutputs.length; ++i) {
-				if (st.lastOutputs[i].preview !== false && st.lastOutputs[i].kind === 'action_td') {
-					sel.value = st.lastOutputs[i].rel;
-					break;
-				}
-			}
-		}
-		// a non-previewable primary output (result_*.json) must not become the
-		// selected preview target — fall back to the first heatmap-able CSV
-		var chosen = resultFileMeta(sel.value);
-		if (chosen && chosen.preview === false) {
-			for (var j = 0; j < st.lastOutputs.length; ++j) {
-				var cand = st.lastOutputs[j];
-				if (cand && cand.preview !== false && trim(cand.rel)) {
-					sel.value = cand.rel;
-					break;
-				}
+		if (prev) {
+			for (var i = 0; i < sel.options.length; ++i) {
+				if (sel.options[i].value === prev) { sel.selectedIndex = i; break; }
 			}
 		}
 		st.lastFile = sel.value || st.lastFile;
 		st.refs.previewBtn.disabled = !st.lastFile;
+	}
+
+	function refreshResultSchemes(preferred) {
+		var name = st.lastCase || selectedCase();
+		if (!name) {
+			fillResultFiles([], '');
+			return;
+		}
+		jsonFetch('/api/schedule-files?case=' + encodeURIComponent(name) + '&dir=result_opt')
+			.then(function (pack) {
+				var body = pack.body || {};
+				if (!pack.res.ok || body.error) throw new Error(body.error || ('HTTP ' + pack.res.status));
+				fillResultFiles(body.files || [], preferred);
+			})
+			.catch(function () { fillResultFiles([], ''); });
 	}
 
 	function relaxationsOf(result) {
@@ -843,9 +1004,8 @@
 		if (!job) return;
 		st.lastCase = job.case || st.lastCase;
 		st.lastResult = job.result || null;
-		st.lastFile = job.file || st.lastFile;
-		fillResultFiles(job.outputs || [], job.file);
-		st.refs.resultBox.hidden = !st.lastResult;
+		st.lastFile = (job.resultOpt && job.resultOpt.rel) || job.file || st.lastFile;
+		refreshResultSchemes(st.lastFile);
 		st.refs.optimal.hidden = !st.lastResult;
 		if (st.lastResult) {
 			st.refs.optimal.textContent = st.lastResult.optimal ? '最优解' : '非最优解';
@@ -901,6 +1061,89 @@
 
 	/* ---------------------------------------------------------------- preview */
 
+	function cancelSolve() {
+		setStatus('正在中断…', 'live');
+		jsonFetch('/api/opt-milp/cancel', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}'
+		}).then(function (pack) {
+			var body = pack.body || {};
+			if (!pack.res.ok || body.ok === false) throw new Error(body.error || ('HTTP ' + pack.res.status));
+			var job = body.job;
+			if (job && job.nativeBusy && job.id) {
+				setStatus(describeJob(job), 'live');
+				setBusy(true);
+				pollJob(job.id);
+				return;
+			}
+			stopPoll();
+			setBusy(false);
+			setStatus(job ? describeJob(job) : '已中断', 'done');
+		}).catch(function (err) {
+			setBusy(false);
+			setStatus('中断失败：' + (err && err.message ? err.message : err), 'error');
+		});
+	}
+
+	function previewObs() {
+		var name = selectedCase();
+		var t = readTimeFields();
+		if (!name || !t.start_time) {
+			setStatus('请先选择案例并填写开始时间', 'error');
+			return;
+		}
+		var hours = readObsHours();
+		jsonFetch('/api/obs/preview?case=' + encodeURIComponent(name) +
+			'&start=' + encodeURIComponent(t.start_time) +
+			'&hours=' + encodeURIComponent(String(hours)))
+			.then(function (pack) {
+				var data = pack.body || {};
+				if (!pack.res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + pack.res.status));
+				var series = data.series || [];
+				var lines = series.slice(0, 16).map(function (s) {
+					return '<li>' + escapeHtml(s.name || s.obj || s.id || '') + '</li>';
+				}).join('');
+				openInfoMask('实测数据 · ' + name, '<p class="ocis-opt-hint">' +
+					escapeHtml((data.db || '') + ' · ' + (data.start || '') + ' → ' + (data.end || '') +
+						' · ' + series.length + ' 条') + '</p><ul class="ocis-opt-hint">' +
+					(lines || '<li>没有实测序列</li>') + '</ul>');
+			})
+			.catch(function (err) {
+				setStatus('实测预览失败：' + (err && err.message ? err.message : err), 'error');
+			});
+	}
+
+	function previewWaterPlan() {
+		var name = selectedCase();
+		var t = readTimeFields();
+		if (!name || !t.start_time || !(t.T > 0)) {
+			setStatus('请先选择案例并填写开始时间和时长 T', 'error');
+			return;
+		}
+		updateWaterPlanMeta('拉取中…');
+		jsonFetch('/api/obs/water-plan?case=' + encodeURIComponent(name) +
+			'&start=' + encodeURIComponent(t.start_time) +
+			'&T=' + encodeURIComponent(String(t.T)))
+			.then(function (pack) {
+				var data = pack.body || {};
+				if (!pack.res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + pack.res.status));
+				updateWaterPlanMeta((data.db || '') + ' · ' + (data.shownCount || 0) + ' 站');
+				if (data.plan && data.plan.columns && data.plan.columns.length) {
+					openPreview(data.plan, '用水计划 · ' + name, {
+						unit: 'm³/s',
+						hint: '观测库实测流量 · 自开始时间起 T=' + data.T + ' h'
+					});
+					return;
+				}
+				setStatus('用水计划没有可绘制的序列', 'error');
+			})
+			.catch(function (err) {
+				updateWaterPlanMeta();
+				setStatus('用水计划预览失败：' + (err && err.message ? err.message : err), 'error');
+			});
+	}
+
 	function previewResult() {
 		var name = st.lastCase || selectedCase();
 		var rel = trim(st.refs.resultFile.value) || st.lastFile;
@@ -909,11 +1152,8 @@
 			return;
 		}
 		var meta = resultFileMeta(rel);
-		if (meta && meta.preview === false) {
-			setStatus('该文件不是调度热图（' + rel + '），请改选 action_td / Q_td 等 CSV', 'error');
-			return;
-		}
-		previewPlan(name, rel, '调度结果 · ' + rel, {
+		var label = meta ? ((meta.name || rel) + (meta.tag ? (' · ' + meta.tag) : '')) : rel;
+		previewPlan(name, rel, '调度结果 · ' + label, {
 			unit: 'm³/s',
 			hint: '色值按每个对象自身流量峰值归一化；悬停或点击单元格查看实际流量。'
 		});

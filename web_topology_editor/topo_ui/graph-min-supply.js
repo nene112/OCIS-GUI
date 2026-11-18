@@ -1,5 +1,6 @@
 /**
- * 最小供水网络：完整拓扑半透明灰，选中的渠段和闸门保持原色。
+ * 最小供水网络：选中的渠段和闸门保持原色。
+ * 未入选的节点、边和渠段标识随「展示最小供水网络之外的网络」一起显示或收起。
  * GET /api/opt-milp/min-supply?case=&file=
  * 打开 /topo?data=<case>&minSupply=1 时自动套上。
  */
@@ -14,8 +15,11 @@
 
 	var showSeq = 0;
 
+	var OUTSIDE_KEY = 'ocisShowOutsideNet';
+
 	var state = {
 		active: false,
+		showOutside: true,
 		snap: null,
 		keep: null,
 		labels: [],
@@ -23,6 +27,10 @@
 		raf: 0,
 		selection: null
 	};
+
+	try {
+		if (localStorage.getItem(OUTSIDE_KEY) === '0') state.showOutside = false;
+	} catch (e) { /* ignore */ }
 
 	function remember(caseName, body) {
 		var poolSources = [];
@@ -85,6 +93,17 @@
 		btn.setAttribute('aria-pressed', shown ? 'true' : 'false');
 	}
 
+	function sideHost() {
+		var host = document.getElementById('ocisTopoSide');
+		if (!host) {
+			host = document.createElement('div');
+			host.id = 'ocisTopoSide';
+			host.className = 'ocis-topo-side';
+			document.body.appendChild(host);
+		}
+		return host;
+	}
+
 	function chip(summary, bad) {
 		var el = document.getElementById('ocisMinSupplyChip');
 		if (!el) {
@@ -92,12 +111,13 @@
 			el.id = 'ocisMinSupplyChip';
 			el.className = 'ocis-min-supply-chip';
 			el.innerHTML = '<span></span><button type="button">恢复</button>';
-			document.body.appendChild(el);
+			sideHost().insertBefore(el, sideHost().firstChild);
 			el.querySelector('button').addEventListener('click', function () { clear(); });
 		}
 		el.classList.toggle('is-bad', !!bad);
 		el.querySelector('span').textContent = summary || '';
 		el.hidden = false;
+		syncLayerChecks();
 	}
 
 	function hideChip() {
@@ -141,6 +161,10 @@
 		Object.keys(snap.edges).forEach(function (id) {
 			var rec = snap.edges[id];
 			var i = Number(id);
+			if (graph.edgeTags && snap.edgeTags && snap.edgeTags[id] !== undefined &&
+				graph.edgeTags[i] === undefined) {
+				graph.edgeTags[i] = snap.edgeTags[id];
+			}
 			if (!graph.edgeColors || i * 3 + 2 >= graph.edgeColors.length) return;
 			graph.edgeColors[i * 3] = rec[0];
 			graph.edgeColors[i * 3 + 1] = rec[1];
@@ -161,7 +185,8 @@
 		Object.keys(snap.nodes).forEach(function (id) {
 			var i = Number(id);
 			if (!graph.colors || i * 4 + 3 >= graph.colors.length) return;
-			var color = state.keep[id] ? snap.nodes[id].color : GRAY_NODE;
+			var color = state.keep[id] ? snap.nodes[id].color
+				: (state.showOutside ? GRAY_NODE : [GRAY_NODE[0], GRAY_NODE[1], GRAY_NODE[2], 0]);
 			graph.colors[i * 4] = color[0];
 			graph.colors[i * 4 + 1] = color[1];
 			graph.colors[i * 4 + 2] = color[2];
@@ -174,6 +199,15 @@
 				var a = graph.edgeIndices[i * 2];
 				var b = graph.edgeIndices[i * 2 + 1];
 				var on = !!(state.keep[a] && state.keep[b]);
+				var visible = on || state.showOutside;
+				if (graph.edgeTags && snap.edgeTags && snap.edgeTags[id] !== undefined) {
+					if (visible) {
+						if (graph.edgeTags[i] === undefined) graph.edgeTags[i] = snap.edgeTags[id];
+					} else if (graph.edgeTags[i] !== undefined) {
+						graph.edgeTags[i] = undefined;
+					}
+				}
+				if (!visible) return;
 				var color = on ? snap.edges[id] : GRAY_EDGE;
 				graph.edgeColors[i * 3] = color[0];
 				graph.edgeColors[i * 3 + 1] = color[1];
@@ -193,7 +227,7 @@
 		(selectedList || []).forEach(function (name) {
 			if (name) selected[String(name)] = true;
 		});
-		var snap = { nodes: {}, edges: {} };
+		var snap = { nodes: {}, edges: {}, edgeTags: {} };
 		var keep = Object.create(null);
 		var labels = [];
 		graph.activeNodeIds().forEach(function (id) {
@@ -213,8 +247,10 @@
 			};
 			var on = nodeKept(node, selected);
 			keep[id] = on;
-			if (!on && name && !isCanal(node)) {
-				labels.push({ id: id, name: name });
+			// 原生标注不看节点透明度，渠段名会留在已经隐藏的边上。
+			// 未入选的闸门和渠段都改由本层绘制，才能跟图层开关一起收起。
+			if (!on && name) {
+				labels.push({ id: id, name: name, canal: isCanal(node) });
 				props.__ocisSupplyName = name;
 				props.name = '\u200b';
 				props.title = '';
@@ -227,6 +263,7 @@
 					graph.edgeColors[id * 3 + 1],
 					graph.edgeColors[id * 3 + 2]
 				];
+				if (graph.edgeTags) snap.edgeTags[id] = graph.edgeTags[id];
 			});
 		}
 		state.snap = snap;
@@ -274,6 +311,7 @@
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'bottom';
 		ctx.fillStyle = dark ? 'rgba(186,190,204,0.38)' : 'rgba(90,94,110,0.40)';
+		if (!state.showOutside) return;
 		state.labels.forEach(function (item) {
 			var x = graph.positions[item.id * 2];
 			var y = graph.positions[item.id * 2 + 1];
@@ -300,6 +338,87 @@
 		restore();
 		hideChip();
 		syncButton(false);
+		syncLayerChecks();
+	}
+
+	function clickSettings(id) {
+		var el = document.getElementById(id);
+		if (el) el.click();
+	}
+
+	function settingsOn(id) {
+		var el = document.getElementById(id);
+		return !!(el && el.classList.contains('active'));
+	}
+
+	function syncLayerChecks() {
+		var menu = document.getElementById('ocisLayerMenu');
+		if (!menu) return;
+		var map = {
+			shp: settingsOn('ocisToggleShpLayer'),
+			attract: settingsOn('ocisToggleAttractLayer'),
+			center: settingsOn('ocisToggleScaleCenter'),
+			minSupply: state.active,
+			outside: state.showOutside
+		};
+		Object.keys(map).forEach(function (key) {
+			var box = menu.querySelector('input[data-layer="' + key + '"]');
+			if (box) box.checked = !!map[key];
+		});
+	}
+
+	function setShowOutside(on) {
+		state.showOutside = !!on;
+		try { localStorage.setItem(OUTSIDE_KEY, state.showOutside ? '1' : '0'); } catch (e) { /* ignore */ }
+		if (state.active) paint();
+		syncLayerChecks();
+	}
+
+	function ensureLayer() {
+		if (document.getElementById('ocisLayerDock')) return;
+		var dock = document.createElement('div');
+		dock.id = 'ocisLayerDock';
+		dock.className = 'ocis-layer-dock';
+		dock.innerHTML = '' +
+			'<button type="button" class="ocis-layer-btn" id="ocisLayerToggle">图层</button>' +
+			'<div class="ocis-layer-menu" id="ocisLayerMenu" hidden>' +
+			'<label><input type="checkbox" data-layer="shp"> 显示 SHP 图层</label>' +
+			'<label><input type="checkbox" data-layer="attract"> 显示吸引虚线</label>' +
+			'<label><input type="checkbox" data-layer="center"> 显示缩放中心</label>' +
+			'<button type="button" data-layer="resetCenter">重置缩放中心</button>' +
+			'<label><input type="checkbox" data-layer="minSupply"> 最小供水网络</label>' +
+			'<label><input type="checkbox" data-layer="outside"> 展示最小供水网络之外的网络</label>' +
+			'</div>';
+		sideHost().appendChild(dock);
+		dock.querySelector('#ocisLayerToggle').addEventListener('click', function () {
+			var menu = document.getElementById('ocisLayerMenu');
+			if (!menu) return;
+			menu.hidden = !menu.hidden;
+			if (!menu.hidden) syncLayerChecks();
+		});
+		dock.addEventListener('change', function (ev) {
+			var box = ev.target;
+			if (!box || !box.getAttribute) return;
+			var key = box.getAttribute('data-layer');
+			if (key === 'shp') clickSettings('ocisToggleShpLayer');
+			else if (key === 'attract') clickSettings('ocisToggleAttractLayer');
+			else if (key === 'center') clickSettings('ocisToggleScaleCenter');
+			else if (key === 'minSupply') {
+				toggle({}).catch(function (err) {
+					chip(err && err.message ? err.message : '最小供水网络失败', true);
+				});
+			} else if (key === 'outside') setShowOutside(!!box.checked);
+		});
+		dock.querySelector('[data-layer="resetCenter"]').addEventListener('click', function () {
+			clickSettings('ocisResetScaleCenter');
+		});
+		document.addEventListener('click', function (ev) {
+			var menu = document.getElementById('ocisLayerMenu');
+			if (!menu || menu.hidden) return;
+			if (dock.contains(ev.target)) return;
+			menu.hidden = true;
+		});
+		syncLayerChecks();
 	}
 
 	function show(opts) {
@@ -348,6 +467,7 @@
 	}
 
 	function boot() {
+		ensureLayer();
 		var flag = '';
 		try { flag = new URLSearchParams(window.location.search).get('minSupply') || ''; } catch (e) { flag = ''; }
 		if (flag !== '1') return;
@@ -372,6 +492,7 @@
 		clear: clear,
 		toggle: toggle,
 		active: function () { return state.active; },
+		setShowOutside: setShowOutside,
 		selection: function () {
 			if (!state.active || !state.selection) return null;
 			if (!state.selection.poolSources || !state.selection.poolSources.length) return null;
